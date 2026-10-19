@@ -12,6 +12,7 @@ import {
   TimeSignature,
   TimeSignatureId,
 } from './grades';
+import { generateChorale } from './chorale';
 import { Random } from './random';
 import {
   COMPOUND_CELLS,
@@ -50,19 +51,37 @@ export interface Note {
   rest?: boolean;
   /** True when the note deliberately uses a chromatic pitch (Grade 4+ secondary dominant). */
   chromatic?: boolean;
+  /** Tied to the next note of the same voice (a suspension). */
+  tie?: boolean;
+  /** Held under a fermata (the end of a chorale phrase). */
+  fermata?: boolean;
+}
+
+/** The four voices of a chorale: soprano and alto on the treble stave, tenor and bass on the bass stave. */
+export interface ChoraleVoices {
+  s: Note[];
+  a: Note[];
+  t: Note[];
+  b: Note[];
 }
 
 /** A chord sounding from `at` (ticks from the start of the bar) to the next chord or the bar line. */
 export interface Harmony {
   symbol: string;
   at: number;
+  /** Chorales: the chord's notes as pitch-class names, root first (then 3rd, 5th, 7th). */
+  tones?: string[];
 }
 
 export interface Bar {
-  /** One chord, or two when the harmony changes at the half bar. */
+  /** One chord, or two when the harmony changes at the half bar (one per beat in a chorale). */
   harmony: Harmony[];
+  /** Right hand (in a chorale: the soprano). */
   rh: Note[];
+  /** Left hand (in a chorale: the bass). */
   lh: Note[];
+  /** Present for chorales: all four voices. Bars may be shorter than the time signature (upbeat, final bar). */
+  voices?: ChoraleVoices;
 }
 
 /**
@@ -81,6 +100,8 @@ export interface PhraseInfo {
   sequence?: SequenceName;
   /** Opens with an exact repeat of the piece's first two bars. */
   repeatsOpening: boolean;
+  /** The key the phrase cadences in, when it modulates (chorales), e.g. "D major". */
+  key?: string;
 }
 
 export interface Tempo {
@@ -120,11 +141,13 @@ export function keysFor(grade: Grade, style: StyleId): Key[] {
   return KEYS.filter((k) => spec.keys.includes(k.id) && !(STYLES[style].majorOnly && k.mode === 'minor'));
 }
 
-export function timesFor(grade: Grade): TimeSignatureId[] {
+export function timesFor(grade: Grade, style?: StyleId): TimeSignatureId[] {
+  if (style === 'chorale') return ['4/4'];
   return [...GRADE_SPECS[grade].times];
 }
 
 export function generatePiece(settings: Settings): Piece {
+  if (settings.style === 'chorale') return generateChorale(settings);
   const { seed, grade, style: styleId } = settings;
   const spec = GRADE_SPECS[grade];
   const style = STYLES[styleId];

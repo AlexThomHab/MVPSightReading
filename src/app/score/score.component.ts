@@ -148,14 +148,30 @@ export class ScoreComponent {
 }
 
 interface BuiltBar {
-  rh: VF.Voice;
-  lh: VF.Voice;
+  /** One voice per stave for piano music; two (stems up and down) for a chorale. */
+  treble: VF.Voice[];
+  bass: VF.Voice[];
   beams: VF.Beam[];
+  ties: VF.StaveTie[];
+}
+
+/** Splits bars into lines of at most BARS_PER_LINE, as evenly as possible (no lonely last bar). */
+function lineBreaks(count: number): number[][] {
+  const lines = Math.ceil(count / BARS_PER_LINE);
+  const out: number[][] = [];
+  let next = 0;
+  for (let line = 0; line < lines; line++) {
+    const size = Math.floor(count / lines) + (line < count % lines ? 1 : 0);
+    out.push(Array.from({ length: size }, (_, i) => next + i));
+    next += size;
+  }
+  return out;
 }
 
 function drawPiece(vf: typeof VF, piece: Piece, el: HTMLDivElement): BarBox[] {
   const { Renderer, Stave, StaveConnector, Formatter, BarlineType } = vf;
-  const lines = Math.ceil(piece.bars.length / BARS_PER_LINE);
+  const layout = lineBreaks(piece.bars.length);
+  const lines = layout.length;
   const height = TOP + lines * SYSTEM_HEIGHT - 40;
   const renderer = new Renderer(el, Renderer.Backends.SVG);
   renderer.resize(PAGE_WIDTH, height);
@@ -165,6 +181,9 @@ function drawPiece(vf: typeof VF, piece: Piece, el: HTMLDivElement): BarBox[] {
     svg.setAttribute('viewBox', `0 0 ${PAGE_WIDTH} ${height}`);
     svg.removeAttribute('width');
     svg.removeAttribute('height');
+    // VexFlow also sets an inline pixel size; drop it so the SVG scales to its container.
+    svg.style.removeProperty('width');
+    svg.style.removeProperty('height');
   }
 
   const keySpec = piece.key.id;
@@ -172,7 +191,7 @@ function drawPiece(vf: typeof VF, piece: Piece, el: HTMLDivElement): BarBox[] {
   const boxes: BarBox[] = [];
 
   for (let line = 0; line < lines; line++) {
-    const bars = piece.bars.slice(line * BARS_PER_LINE, (line + 1) * BARS_PER_LINE);
+    const bars = layout[line].map((i) => piece.bars[i]);
     const y = TOP + line * SYSTEM_HEIGHT;
 
     // Width taken by clef, key and (first line) time signature.
@@ -188,19 +207,22 @@ function drawPiece(vf: typeof VF, piece: Piece, el: HTMLDivElement): BarBox[] {
     // Give each bar at least the room its notes need, then share out the rest evenly.
     const minWidths = bars.map((bar) => {
       const built = buildBar(vf, piece, bar, keySpec);
-      const formatter = new Formatter().joinVoices([built.rh]).joinVoices([built.lh]);
-      return formatter.preCalculateMinTotalWidth([built.rh, built.lh]) + 36;
+      const formatter = new Formatter().joinVoices(built.treble).joinVoices(built.bass);
+      return formatter.preCalculateMinTotalWidth([...built.treble, ...built.bass]) + 36;
     });
     const available = PAGE_WIDTH - LEFT - RIGHT - modifierWidth;
     const total = minWidths.reduce((a, b) => a + b, 0);
+    // Spare room goes to bars in proportion to their length, so a one-beat upbeat stays narrow.
+    const lengths = bars.map((bar) => bar.rh.reduce((a, n) => a + n.ticks, 0));
+    const totalLength = lengths.reduce((a, b) => a + b, 0);
     const widths =
       total <= available
-        ? minWidths.map((w) => w + (available - total) / bars.length)
+        ? minWidths.map((w, i) => w + ((available - total) * lengths[i]) / totalLength)
         : minWidths.map((w) => (w * available) / total);
 
     let x = LEFT;
     bars.forEach((bar, i) => {
-      const barIndex = line * BARS_PER_LINE + i;
+      const barIndex = layout[line][i];
       const first = i === 0;
       const isFinal = barIndex === piece.bars.length - 1;
       const width = widths[i] + (first ? modifierWidth : 0);
@@ -239,13 +261,17 @@ function drawPiece(vf: typeof VF, piece: Piece, el: HTMLDivElement): BarBox[] {
       new StaveConnector(treble, bass).setType(isFinal ? 'boldDoubleRight' : 'singleRight').setContext(ctx).draw();
 
       const built = buildBar(vf, piece, bar, keySpec, barIndex === 0 ? piece.dynamic : undefined);
-      built.rh.setStave(treble);
-      built.lh.setStave(bass);
+      built.treble.forEach((v) => v.setStave(treble));
+      built.bass.forEach((v) => v.setStave(bass));
       const justify = treble.getNoteEndX() - treble.getNoteStartX() - 14;
-      new Formatter().joinVoices([built.rh]).joinVoices([built.lh]).format([built.rh, built.lh], justify);
-      built.rh.draw(ctx, treble);
-      built.lh.draw(ctx, bass);
+      new Formatter()
+        .joinVoices(built.treble)
+        .joinVoices(built.bass)
+        .format([...built.treble, ...built.bass], justify);
+      built.treble.forEach((v) => v.draw(ctx, treble));
+      built.bass.forEach((v) => v.draw(ctx, bass));
       built.beams.forEach((b) => b.setContext(ctx).draw());
+      built.ties.forEach((t) => t.setContext(ctx).draw());
 
       const top = y + 10;
       const bottom = y + STAVE_GAP + 90;
@@ -263,37 +289,71 @@ function drawPiece(vf: typeof VF, piece: Piece, el: HTMLDivElement): BarBox[] {
 }
 
 function buildBar(vf: typeof VF, piece: Piece, bar: Bar, keySpec: string, dynamic?: string): BuiltBar {
-  const { Voice, Accidental, Beam, Annotation } = vf;
-  const toVoice = (notes: Note[], clef: 'treble' | 'bass') => {
-    const staveNotes = notes.map((n) => makeNote(vf, n, clef));
-    const voice = new Voice({ numBeats: piece.time.num, beatValue: piece.time.den });
+  const { Voice, Accidental, Beam, Annotation, Articulation, Modifier, StaveTie, Stem } = vf;
+  const groups = Beam.getDefaultBeamGroups(`${piece.time.num}/${piece.time.den}`);
+  const beams: VF.Beam[] = [];
+  const ties: VF.StaveTie[] = [];
+  /** Ticks (semiquavers) per beat of the time signature's denominator. */
+  const unit = 16 / piece.time.den;
+
+  const toVoice = (notes: Note[], clef: 'treble' | 'bass', stem?: number, fermata?: 'above' | 'below') => {
+    const staveNotes = notes.map((n) => makeNote(vf, n, clef, stem));
+    if (fermata) {
+      notes.forEach((n, i) => {
+        if (!n.fermata) return;
+        const mark = new Articulation(fermata === 'above' ? 'a@a' : 'a@u').setPosition(
+          fermata === 'above' ? Modifier.Position.ABOVE : Modifier.Position.BELOW,
+        );
+        staveNotes[i].addModifier(mark, 0);
+      });
+    }
+    notes.forEach((n, i) => {
+      if (n.tie && staveNotes[i + 1]) {
+        ties.push(new StaveTie({ firstNote: staveNotes[i], lastNote: staveNotes[i + 1], firstIndexes: [0], lastIndexes: [0] }));
+      }
+    });
+    // Bars may be short (a chorale's upbeat and final bar), so size the voice to its notes.
+    const ticks = notes.reduce((a, n) => a + n.ticks, 0);
+    const voice = new Voice({ numBeats: ticks / unit, beatValue: piece.time.den });
     voice.addTickables(staveNotes);
-    Accidental.applyAccidentals([voice], keySpec);
+    beams.push(...Beam.generateBeams(staveNotes, stem === undefined ? { groups } : { groups, stemDirection: stem }));
     return { voice, staveNotes };
   };
-  const rh = toVoice(bar.rh, 'treble');
-  const lh = toVoice(bar.lh, 'bass');
+
+  let treble: ReturnType<typeof toVoice>[];
+  let bass: ReturnType<typeof toVoice>[];
+  if (bar.voices) {
+    // Chorale: soprano (stems up) and alto (down) share the treble stave; tenor and bass the bass stave.
+    treble = [toVoice(bar.voices.s, 'treble', Stem.UP, 'above'), toVoice(bar.voices.a, 'treble', Stem.DOWN)];
+    bass = [toVoice(bar.voices.t, 'bass', Stem.UP), toVoice(bar.voices.b, 'bass', Stem.DOWN, 'below')];
+  } else {
+    treble = [toVoice(bar.rh, 'treble')];
+    bass = [toVoice(bar.lh, 'bass')];
+  }
+  Accidental.applyAccidentals(treble.map((v) => v.voice), keySpec);
+  Accidental.applyAccidentals(bass.map((v) => v.voice), keySpec);
   if (dynamic) {
     const mark = new Annotation(dynamic)
       .setFont('Academico', 17, 'bold', 'italic')
       .setVerticalJustification(Annotation.VerticalJustify.BOTTOM);
-    rh.staveNotes[0].addModifier(mark, 0);
+    treble[0].staveNotes[0].addModifier(mark, 0);
   }
-  const groups = Beam.getDefaultBeamGroups(`${piece.time.num}/${piece.time.den}`);
-  const beams = [
-    ...Beam.generateBeams(rh.staveNotes, { groups }),
-    ...Beam.generateBeams(lh.staveNotes, { groups }),
-  ];
-  return { rh: rh.voice, lh: lh.voice, beams };
+  return { treble: treble.map((v) => v.voice), bass: bass.map((v) => v.voice), beams, ties };
 }
 
-function makeNote(vf: typeof VF, n: Note, clef: 'treble' | 'bass'): VF.StaveNote {
+function makeNote(vf: typeof VF, n: Note, clef: 'treble' | 'bass', stem?: number): VF.StaveNote {
   const { StaveNote, Dot } = vf;
   const d = DURATIONS[n.ticks];
   if (!d) throw new Error(`No notation for a duration of ${n.ticks} semiquavers`);
   const note = n.rest
     ? new StaveNote({ keys: [clef === 'bass' ? 'd/3' : 'b/4'], duration: d.duration, dots: d.dots, type: 'r', clef })
-    : new StaveNote({ keys: n.pitches.map(vexKey), duration: d.duration, dots: d.dots, clef, autoStem: true });
+    : new StaveNote({
+        keys: n.pitches.map(vexKey),
+        duration: d.duration,
+        dots: d.dots,
+        clef,
+        ...(stem === undefined ? { autoStem: true } : { stemDirection: stem }),
+      });
   if (d.dots) Dot.buildAndAttach([note], { all: true });
   return note;
 }

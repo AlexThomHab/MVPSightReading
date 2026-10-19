@@ -51,32 +51,66 @@ export class PlaybackService {
     const draw = Tone.getDraw();
     const secondsPerTick = 60 / bpm / piece.time.beatTicks;
     const beatSeconds = secondsPerTick * piece.time.beatTicks;
-    const countIn = piece.time.beatsPerBar * beatSeconds;
+    // An upbeat (chorales) is counted in from the rest of its bar.
+    const barTicks = piece.bars.map((b) => b.rh.reduce((a, n) => a + n.ticks, 0));
+    const clicks = (piece.time.barTicks - (barTicks[0] < piece.time.barTicks ? barTicks[0] : 0)) / piece.time.beatTicks;
+    const countIn = (clicks || piece.time.beatsPerBar) * beatSeconds;
 
-    // Count-in: one bar of clicks, the first accented.
-    for (let beat = 0; beat < piece.time.beatsPerBar; beat++) {
+    // Count-in clicks, the first accented.
+    for (let beat = 0; beat < clicks; beat++) {
       transport.schedule((time) => {
         this.click?.triggerAttackRelease(beat === 0 ? 'C6' : 'G5', 0.03, time);
       }, beat * beatSeconds);
     }
 
-    piece.bars.forEach((bar, barIndex) => {
-      const barStart = countIn + barIndex * piece.time.barTicks * secondsPerTick;
-      transport.schedule((time) => draw.schedule(() => this.currentBar.set(barIndex), time), barStart);
-      for (const [notes, velocity] of [[bar.rh, 0.75], [bar.lh, 0.55]] as const) {
-        let tick = 0;
-        for (const note of notes) {
-          if (!note.rest) {
-            const names = note.pitches.map((p) => Tone.Frequency(midi(p), 'midi').toNote());
-            const duration = note.ticks * secondsPerTick * 0.95;
-            transport.schedule((time) => piano.triggerAttackRelease(names, duration, time, velocity), barStart + tick * secondsPerTick);
-          }
-          tick += note.ticks;
-        }
+    // Fermatas hold the chord for longer and delay everything after them.
+    const fermataEnds: number[] = [];
+    const fermataHold = beatSeconds * 0.9;
+    let t = 0;
+    for (const bar of piece.bars) {
+      for (const n of bar.rh) {
+        if (n.fermata) fermataEnds.push(t + n.ticks);
+        t += n.ticks;
       }
+    }
+    const timeOf = (tick: number) => countIn + tick * secondsPerTick + fermataHold * fermataEnds.filter((e) => e <= tick).length;
+
+    const barStarts: number[] = [];
+    barTicks.reduce((start, ticks, i) => ((barStarts[i] = start), start + ticks), 0);
+    piece.bars.forEach((_, barIndex) => {
+      transport.schedule((time) => draw.schedule(() => this.currentBar.set(barIndex), time), timeOf(barStarts[barIndex]));
     });
 
-    const end = countIn + piece.bars.length * piece.time.barTicks * secondsPerTick;
+    // Each voice: chorales have four, piano music two (right and left hand).
+    const first = piece.bars[0];
+    const voices: [keyof NonNullable<typeof first.voices> | 'rh' | 'lh', number][] = first.voices
+      ? [['s', 0.72], ['a', 0.5], ['t', 0.5], ['b', 0.62]]
+      : [['rh', 0.75], ['lh', 0.55]];
+    for (const [name, velocity] of voices) {
+      const notes = piece.bars.flatMap((bar, i) => {
+        const list = name === 'rh' || name === 'lh' ? bar[name] : bar.voices![name];
+        let tick = barStarts[i];
+        return list.map((note) => ({ note, start: (tick += note.ticks) - note.ticks }));
+      });
+      for (let i = 0; i < notes.length; i++) {
+        const { note, start } = notes[i];
+        if (note.rest) continue;
+        // A tied note sounds once, for the combined length.
+        let end = start + note.ticks;
+        let last = note;
+        while (last.tie && notes[i + 1]) {
+          i++;
+          last = notes[i].note;
+          end = notes[i].start + last.ticks;
+        }
+        const names = note.pitches.map((p) => Tone.Frequency(midi(p), 'midi').toNote());
+        // timeOf() already adds the fermata's hold at the end of a fermata note.
+        const duration = (timeOf(end) - timeOf(start)) * 0.95;
+        transport.schedule((time) => piano.triggerAttackRelease(names, duration, time, velocity), timeOf(start));
+      }
+    }
+
+    const end = timeOf(t);
     transport.schedule((time) => draw.schedule(() => this.finish(run), time), end + 0.3);
 
     transport.position = 0;

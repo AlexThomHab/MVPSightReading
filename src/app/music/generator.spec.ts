@@ -1,6 +1,6 @@
 import { Cadence, generatePiece, keysFor, Note, Piece, SequenceName, timesFor } from './generator';
 import { GRADES, GRADE_SPECS } from './grades';
-import { STYLE_IDS } from './styles';
+import { PIANO_STYLE_IDS as STYLE_IDS } from './styles';
 import {
   LETTERS,
   bassDegree,
