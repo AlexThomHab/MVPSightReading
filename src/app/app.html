@@ -90,3 +90,16 @@
   </header>
   <app-score [piece]="piece()" [activeBar]="playback.currentBar()" />
 </main>
+
+<section class="analysis" aria-label="Phrase analysis">
+  <h3>Analysis</h3>
+  <ol>
+    @for (ph of analysis(); track ph.bars) {
+      <li>
+        <span class="analysis-bars">{{ ph.bars }}</span>
+        <span>{{ ph.detail.join(' · ') }}</span>
+        <span class="analysis-chords">{{ ph.chords }}</span>
+      </li>
+    }
+  </ol>
+</section>

@@ -3,6 +3,7 @@
  * dynamics and the left-hand accompaniment used at Grades 4–5.
  */
 import { Grade, TimeSignatureId } from './grades';
+import { ExtraChord } from './theory';
 
 export type StyleId = 'classical' | 'waltz' | 'minuet' | 'march' | 'folk';
 export const STYLE_IDS: readonly StyleId[] = ['classical', 'waltz', 'minuet', 'march', 'folk'];
@@ -19,7 +20,7 @@ export interface StyleSpec {
   times: readonly TimeSignatureId[];
   majorOnly: boolean;
   /** Chords beyond I, IV and V this style may use (also subject to the grade). */
-  extraChords: readonly ('ii' | 'vi' | 'VI' | 'V/V')[];
+  extraChords: readonly ExtraChord[];
   accompaniment: Accompaniment;
   tempoMarking: string;
   /** Crotchet beats per minute at Grade 1 and Grade 5 (simple time). */
@@ -31,6 +32,8 @@ export interface StyleSpec {
   downbeatWeights?: Readonly<Record<string, number>>;
 }
 
+const ALL_EXTRA_CHORDS: readonly ExtraChord[] = ['ii', 'iii', 'vi', 'vii°', 'V/V', 'v', 'ii°', 'III', 'VI', 'VII'];
+
 export const STYLES: Readonly<Record<StyleId, StyleSpec>> = {
   classical: {
     id: 'classical',
@@ -38,7 +41,7 @@ export const STYLES: Readonly<Record<StyleId, StyleSpec>> = {
     titleWord: 'Study',
     times: ['4/4', '2/4'],
     majorOnly: false,
-    extraChords: ['ii', 'vi', 'VI', 'V/V'],
+    extraChords: ALL_EXTRA_CHORDS,
     accompaniment: 'alberti',
     tempoMarking: 'Moderato',
     crotchetBpm: [80, 112],
@@ -55,7 +58,7 @@ export const STYLES: Readonly<Record<StyleId, StyleSpec>> = {
     titleWord: 'Waltz',
     times: ['3/4'],
     majorOnly: false,
-    extraChords: ['ii', 'vi', 'VI', 'V/V'],
+    extraChords: ALL_EXTRA_CHORDS,
     accompaniment: 'oompah',
     tempoMarking: 'Tempo di valse',
     crotchetBpm: [104, 138],
@@ -70,7 +73,7 @@ export const STYLES: Readonly<Record<StyleId, StyleSpec>> = {
     titleWord: 'Minuet',
     times: ['3/4'],
     majorOnly: false,
-    extraChords: ['ii', 'vi', 'VI', 'V/V'],
+    extraChords: ALL_EXTRA_CHORDS,
     accompaniment: 'walking',
     tempoMarking: 'Tempo di minuetto',
     crotchetBpm: [88, 116],
@@ -83,7 +86,7 @@ export const STYLES: Readonly<Record<StyleId, StyleSpec>> = {
     titleWord: 'March',
     times: ['2/4', '4/4'],
     majorOnly: true,
-    extraChords: ['ii', 'vi', 'V/V'],
+    extraChords: ['ii', 'iii', 'vi', 'vii°', 'V/V'],
     accompaniment: 'march',
     tempoMarking: 'Tempo di marcia',
     crotchetBpm: [88, 116],

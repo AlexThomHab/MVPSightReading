@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, linkedSignal, signal, untracked } from '@angular/core';
-import { Settings, generatePiece, keysFor, timesFor } from './music/generator';
+import { Cadence, SequenceName, Settings, generatePiece, keysFor, timesFor } from './music/generator';
 import { GRADES, Grade, TIME_SIGNATURES, TimeSignatureId } from './music/grades';
 import { freshSeed } from './music/random';
 import { STYLES, STYLE_IDS, StyleId } from './music/styles';
@@ -23,6 +23,20 @@ function settingsFromUrl(): Settings {
   if (timeId && timesFor(settings.grade).includes(timeId)) settings.timeId = timeId;
   return settings;
 }
+
+const CADENCE_NAMES: Record<Cadence, string> = {
+  PAC: 'Perfect authentic cadence',
+  IAC: 'Imperfect authentic cadence',
+  HC: 'Half cadence',
+  PC: 'Plagal cadence',
+  DC: 'Deceptive cadence',
+};
+
+const SEQUENCE_NAMES: Record<SequenceName, string> = {
+  romanesca: 'Romanesca sequence',
+  'descending-fifths': 'Descending-fifths sequence',
+  'ascending-5-6': 'Ascending 5–6 sequence',
+};
 
 @Component({
   selector: 'app-root',
@@ -75,6 +89,22 @@ export class App {
     const p = this.piece();
     return `Grade ${p.grade} · ${STYLES[p.style].name} · ${keyName(p.key)} · ${p.time.id}`;
   });
+
+  /** Phrase-by-phrase analysis for teachers: bars, any sequence, and the cadence. */
+  protected readonly analysis = computed(() =>
+    this.piece().phrases.map((ph) => ({
+      bars: `Bars ${ph.startBar + 1}–${ph.startBar + ph.bars}`,
+      detail: [
+        ph.repeatsOpening ? 'Repeats the opening' : '',
+        ph.sequence ? SEQUENCE_NAMES[ph.sequence] : '',
+        CADENCE_NAMES[ph.cadence],
+      ].filter(Boolean),
+      chords: this.piece()
+        .bars.slice(ph.startBar, ph.startBar + ph.bars)
+        .map((b) => b.harmony.map((h) => h.symbol).join(' '))
+        .join(' | '),
+    })),
+  );
 
   protected readonly beatLabel = computed(() => {
     const unit = this.piece().tempo.beatUnit;

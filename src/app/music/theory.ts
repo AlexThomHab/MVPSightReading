@@ -164,12 +164,19 @@ export function isSingableInterval(a: Pitch, b: Pitch): boolean {
   return (allowed[steps] ?? []).includes(semis);
 }
 
+/** Chords beyond I, IV and V (i, iv and V in minor) that a grade or style may allow. */
+export type ExtraChord = 'ii' | 'iii' | 'vi' | 'vii°' | 'V/V' | 'v' | 'ii°' | 'III' | 'VI' | 'VII';
+
 /** A chord as scale degrees, with any chromatic alterations it requires. */
 export interface Chord {
-  /** Roman numeral: "I", "ii", "IV", "V", "vi", "i", "iv", "VI", "V/V". */
+  /** Roman numeral, with "6" for first inversion: "I", "V6", "vii°6", "iv6", "V/V". */
   symbol: string;
+  /** The numeral without its inversion figure: "V" for "V6". */
+  base: string;
   /** Root as a scale degree, 0–6. */
   root: number;
+  /** 0 = root position (root in the bass), 1 = first inversion (third in the bass). */
+  inversion: 0 | 1;
   /**
    * Alterations applied to degrees (mod 7) while this chord sounds, relative to the key
    * signature. Minor-key V raises degree 6 (the leading note); V/V raises degree 3.
@@ -184,6 +191,11 @@ export function chordTones(c: Chord): number[] {
   return [c.root, mod(c.root + 2, 7), mod(c.root + 4, 7)];
 }
 
+/** Scale degree (mod 7) of the chord's bass note. */
+export function bassDegree(c: Chord): number {
+  return mod(c.root + 2 * c.inversion, 7);
+}
+
 export function isChordTone(c: Chord, degree: number): boolean {
   return chordTones(c).includes(mod(degree, 7));
 }
@@ -192,29 +204,39 @@ export function alterFor(c: Chord, degree: number): number {
   return c.alters[mod(degree, 7)] ?? 0;
 }
 
+const CHORD_ROOTS: Readonly<Record<string, number>> = {
+  I: 0, i: 0,
+  ii: 1, 'ii°': 1,
+  iii: 2, III: 2,
+  IV: 3, iv: 3,
+  V: 4, v: 4,
+  vi: 5, VI: 5,
+  'vii°': 6, VII: 6,
+  'V/V': 1,
+};
+
+/** Parses a Roman numeral such as "V6" or "vii°6" into a Chord for the given mode. */
 export function chordFor(symbol: string, mode: Mode): Chord {
-  const plain = (root: number): Chord => ({ symbol, root, alters: {}, chromatic: false });
-  switch (symbol) {
-    case 'I':
-    case 'i':
-      return plain(0);
-    case 'ii':
-      return plain(1);
-    case 'IV':
-    case 'iv':
-      return plain(3);
-    case 'vi':
-    case 'VI':
-      return plain(5);
-    case 'V':
-      // Minor keys take a major V: raise the leading note.
-      return { symbol, root: 4, alters: mode === 'minor' ? { 6: 1 } : {}, chromatic: false };
-    case 'V/V':
-      // Secondary dominant (major keys, Grade 4+): raises the fourth degree.
-      return { symbol, root: 1, alters: { 3: 1 }, chromatic: true };
-    default:
-      throw new Error(`Unknown chord ${symbol}`);
+  const inverted = symbol.endsWith('6');
+  const base = inverted ? symbol.slice(0, -1) : symbol;
+  const root = CHORD_ROOTS[base];
+  if (root === undefined) throw new Error(`Unknown chord ${symbol}`);
+  let alters: Record<number, number> = {};
+  let chromatic = false;
+  if (mode === 'minor' && (base === 'V' || base === 'vii°')) {
+    // Dominant-function chords in minor use the raised leading note.
+    alters = { 6: 1 };
+  } else if (base === 'V/V') {
+    // Secondary dominant (major keys, Grade 4+): raises the fourth degree.
+    alters = { 3: 1 };
+    chromatic = true;
   }
+  return { symbol, base, root, inversion: inverted ? 1 : 0, alters, chromatic };
+}
+
+/** True when the 7th degree may sound unraised: natural minor chords that contain it (v, III, VII). */
+export function allowsNaturalSeventh(c: Chord): boolean {
+  return c.alters[6] === undefined && isChordTone(c, 6);
 }
 
 /** Tonic chord symbol for the mode. */
