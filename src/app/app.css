@@ -168,6 +168,49 @@ button.primary:hover {
   color: #888;
 }
 
+.analysis {
+  margin-top: 16px;
+  padding: 14px 18px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-size: 0.9rem;
+}
+
+.analysis h3 {
+  margin: 0 0 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.analysis ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.analysis li {
+  display: grid;
+  grid-template-columns: 7.5em 1fr;
+  column-gap: 12px;
+}
+
+.analysis-bars {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.analysis-chords {
+  grid-column: 2;
+  color: var(--muted);
+  font-family: var(--serif);
+}
+
 @media print {
   :host {
     max-width: none;
@@ -176,7 +219,8 @@ button.primary:hover {
 
   .site-header,
   .toolbar,
-  .notice {
+  .notice,
+  .analysis {
     display: none;
   }
 

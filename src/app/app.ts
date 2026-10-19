@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, linkedSignal, signal, untracked } from '@angular/core';
-import { Settings, generatePiece, keysFor, timesFor } from './music/generator';
+import { Cadence, SequenceName, Settings, generatePiece, keysFor, timesFor } from './music/generator';
 import { GRADES, Grade, TIME_SIGNATURES, TimeSignatureId } from './music/grades';
 import { freshSeed } from './music/random';
 import { STYLES, STYLE_IDS, StyleId } from './music/styles';
@@ -20,9 +20,23 @@ function settingsFromUrl(): Settings {
   const keyId = params.get('key');
   if (keyId && keysFor(settings.grade, settings.style).some((k) => k.id === keyId)) settings.keyId = keyId;
   const timeId = params.get('time') as TimeSignatureId;
-  if (timeId && timesFor(settings.grade).includes(timeId)) settings.timeId = timeId;
+  if (timeId && timesFor(settings.grade, settings.style).includes(timeId)) settings.timeId = timeId;
   return settings;
 }
+
+const CADENCE_NAMES: Record<Cadence, string> = {
+  PAC: 'Perfect authentic cadence',
+  IAC: 'Imperfect authentic cadence',
+  HC: 'Half cadence',
+  PC: 'Plagal cadence',
+  DC: 'Deceptive cadence',
+};
+
+const SEQUENCE_NAMES: Record<SequenceName, string> = {
+  romanesca: 'Romanesca sequence',
+  'descending-fifths': 'Descending-fifths sequence',
+  'ascending-5-6': 'Ascending 5–6 sequence',
+};
 
 @Component({
   selector: 'app-root',
@@ -48,7 +62,7 @@ export class App {
   protected readonly keyOptions = computed(() =>
     keysFor(this.grade(), this.style()).map((k) => ({ id: k.id, name: keyName(k) })),
   );
-  protected readonly timeOptions = computed(() => timesFor(this.grade()));
+  protected readonly timeOptions = computed(() => timesFor(this.grade(), this.style()));
 
   protected readonly settings = computed<Settings>(() => {
     const keyId = this.keyId();
@@ -75,6 +89,31 @@ export class App {
     const p = this.piece();
     return `Grade ${p.grade} · ${STYLES[p.style].name} · ${keyName(p.key)} · ${p.time.id}`;
   });
+
+  /** Phrase-by-phrase analysis for teachers: bars, any sequence, and the cadence. */
+  protected readonly analysis = computed(() =>
+    this.piece().phrases.map((ph, i) => ({
+      // Chorale phrases start on an upbeat, so they are numbered rather than given bar ranges.
+      bars: this.piece().style === 'chorale' ? `Phrase ${i + 1}` : `Bars ${ph.startBar + 1}–${ph.startBar + ph.bars}`,
+      detail: [
+        ph.repeatsOpening ? (this.piece().style === 'chorale' ? 'Repeats phrase ' + (i - 1) : 'Repeats the opening') : '',
+        ph.key ? `Modulates to ${ph.key}` : '',
+        ph.sequence ? SEQUENCE_NAMES[ph.sequence] : '',
+        CADENCE_NAMES[ph.cadence],
+      ].filter(Boolean),
+      chords:
+        this.piece().style === 'chorale'
+          ? // One chord per beat; each chorale phrase is eight beats long.
+            this.piece()
+              .bars.flatMap((b) => b.harmony.map((h) => h.symbol))
+              .slice(i * 8, i * 8 + 8)
+              .join('  ')
+          : this.piece()
+              .bars.slice(ph.startBar, ph.startBar + ph.bars)
+              .map((b) => b.harmony.map((h) => h.symbol).join(' '))
+              .join(' | '),
+    })),
+  );
 
   protected readonly beatLabel = computed(() => {
     const unit = this.piece().tempo.beatUnit;

@@ -8,6 +8,7 @@
  * semibreve 16, dotted minim 12, minim 8, dotted crotchet 6, crotchet 4,
  * dotted quaver 3, quaver 2, semiquaver 1.
  */
+import { ExtraChord } from './theory';
 
 export type Grade = 1 | 2 | 3 | 4 | 5;
 export const GRADES: readonly Grade[] = [1, 2, 3, 4, 5];
@@ -65,7 +66,9 @@ export interface GradeSpec {
   /** Left-hand range as scale degrees from the bass tonic. */
   lhRange: readonly [number, number];
   /** Chords available beyond I, IV and V. */
-  extraChords: readonly ('ii' | 'vi' | 'VI' | 'V/V')[];
+  extraChords: readonly ExtraChord[];
+  /** First-inversion chords and two chords per bar (needed for sequences). */
+  inversions: boolean;
   /** Whether notes outside the key (other than the minor leading note) may appear. */
   chromatic: boolean;
 }
@@ -75,6 +78,9 @@ const G2_KEYS = [...G1_KEYS, 'D', 'Dm', 'Em'];
 const G3_KEYS = [...G2_KEYS, 'Bb', 'Bm', 'Gm'];
 const G4_KEYS = [...G3_KEYS, 'A', 'Eb', 'F#m', 'Cm'];
 const G5_KEYS = [...G4_KEYS, 'E', 'Ab', 'C#m', 'Fm'];
+
+const G3_CHORDS: readonly ExtraChord[] = ['ii', 'iii', 'vi', 'v', 'III', 'VI'];
+const G4_CHORDS: readonly ExtraChord[] = [...G3_CHORDS, 'vii°', 'VII', 'ii°', 'V/V'];
 
 const G1_DURATIONS = [TICKS.semibreve, TICKS.dottedMinim, TICKS.minim, TICKS.crotchet];
 
@@ -90,6 +96,7 @@ export const GRADE_SPECS: Readonly<Record<Grade, GradeSpec>> = {
     rhRange: [0, 4],
     lhRange: [0, 4],
     extraChords: [],
+    inversions: false,
     chromatic: false,
   },
   2: {
@@ -103,6 +110,7 @@ export const GRADE_SPECS: Readonly<Record<Grade, GradeSpec>> = {
     rhRange: [-1, 5],
     lhRange: [-3, 4],
     extraChords: [],
+    inversions: false,
     chromatic: false,
   },
   3: {
@@ -114,8 +122,9 @@ export const GRADE_SPECS: Readonly<Record<Grade, GradeSpec>> = {
     maxLeap: 4,
     maxBassLeap: 5,
     rhRange: [-2, 7],
-    lhRange: [-4, 5],
-    extraChords: ['vi', 'VI', 'ii'],
+    lhRange: [-5, 5],
+    extraChords: G3_CHORDS,
+    inversions: true,
     chromatic: false,
   },
   4: {
@@ -127,8 +136,9 @@ export const GRADE_SPECS: Readonly<Record<Grade, GradeSpec>> = {
     maxLeap: 5,
     maxBassLeap: 7,
     rhRange: [-3, 7],
-    lhRange: [-4, 5],
-    extraChords: ['vi', 'VI', 'ii', 'V/V'],
+    lhRange: [-5, 6],
+    extraChords: G4_CHORDS,
+    inversions: true,
     chromatic: true,
   },
   5: {
@@ -147,7 +157,8 @@ export const GRADE_SPECS: Readonly<Record<Grade, GradeSpec>> = {
     maxBassLeap: 7,
     rhRange: [-3, 9],
     lhRange: [-5, 6],
-    extraChords: ['vi', 'VI', 'ii', 'V/V'],
+    extraChords: G4_CHORDS,
+    inversions: true,
     chromatic: true,
   },
 };
