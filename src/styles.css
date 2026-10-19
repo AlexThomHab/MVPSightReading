@@ -1,1 +1,42 @@
-/* You can add global styles to this file, and also import other style files */
+:root {
+  --serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+  --sans: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --ink: #1d1b19;
+  --muted: #6b655e;
+  --paper: #fffdf9;
+  --panel: #f6f2ec;
+  --page: #ece7df;
+  --line: #e2dbd1;
+  --line-strong: #cfc6b9;
+  --accent: #8a3b12;
+  --accent-strong: #6f2e0d;
+  --notice: #fbecc8;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+}
+
+body {
+  font-family: var(--sans);
+  color: var(--ink);
+  background: var(--page);
+  -webkit-font-smoothing: antialiased;
+}
+
+@page {
+  size: A4;
+  margin: 14mm 12mm;
+}
+
+@media print {
+  body {
+    background: #fff;
+  }
+}
