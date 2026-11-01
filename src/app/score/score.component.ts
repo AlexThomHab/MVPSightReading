@@ -3,8 +3,10 @@ import {
   Component,
   ElementRef,
   ViewEncapsulation,
+  computed,
   effect,
   input,
+  output,
   signal,
   viewChild,
 } from '@angular/core';
@@ -20,6 +22,16 @@ const BARS_PER_LINE = 4;
 const TOP = 56;
 const STAVE_GAP = 110;
 const SYSTEM_HEIGHT = 250;
+
+/** How much of the score to show (ear training conceals it). */
+export interface ScoreView {
+  /** Hide every bar's notes except `revealed`; number the bars; give all bars equal width. */
+  concealed: boolean;
+  revealed: ReadonlySet<number>;
+  showKey: boolean;
+  showTime: boolean;
+  showTempo: boolean;
+}
 
 /** Bar position as fractions of the drawing, for the playback highlight. */
 export interface BarBox {
@@ -67,6 +79,23 @@ function loadVexFlow(): Promise<typeof VF> {
   encapsulation: ViewEncapsulation.None,
   template: `
     <div class="score" #host role="img" [attr.aria-label]="label()"></div>
+    @if (concealed()) {
+      @for (box of boxes(); track $index) {
+        <button
+          type="button"
+          class="bar-target"
+          [class.hidden-bar]="!revealedSet().has($index)"
+          [class.selected]="isSelected($index)"
+          [style.left.%]="box.x * 100"
+          [style.top.%]="box.y * 100"
+          [style.width.%]="box.w * 100"
+          [style.height.%]="box.h * 100"
+          [attr.aria-label]="'Bar ' + ($index + 1) + (revealedSet().has($index) ? ', revealed' : ', hidden')"
+          [attr.aria-pressed]="isSelected($index)"
+          (click)="barSelect.emit({ bar: $index, extend: $event.shiftKey })"
+        ></button>
+      }
+    }
     @if (highlight(); as box) {
       <div
         class="highlight"
@@ -96,6 +125,27 @@ function loadVexFlow(): Promise<typeof VF> {
       border-radius: 4px;
       pointer-events: none;
     }
+    app-score .bar-target {
+      position: absolute;
+      padding: 0;
+      border: 2px solid transparent;
+      border-radius: 4px;
+      background: transparent;
+      cursor: pointer;
+    }
+    app-score .bar-target.hidden-bar {
+      background: repeating-linear-gradient(135deg, rgb(120 110 100 / 0.07) 0 8px, rgb(120 110 100 / 0.13) 8px 16px);
+    }
+    app-score .bar-target:hover {
+      border-color: rgb(138 59 18 / 0.35);
+    }
+    app-score .bar-target.selected {
+      border-color: var(--accent, #8a3b12);
+    }
+    app-score .bar-target:focus-visible {
+      outline: 2px solid var(--accent, #8a3b12);
+      outline-offset: 2px;
+    }
     app-score .error {
       color: #b3261e;
     }
@@ -110,13 +160,39 @@ export class ScoreComponent {
   readonly piece = input.required<Piece>();
   /** Index of the bar to highlight during playback, or null. */
   readonly activeBar = input<number | null>(null);
+  /** Ear training: hide notes (except revealed bars), number the bars and make them selectable. */
+  readonly concealed = input(false);
+  /** Bars (0-based) whose notes are shown while concealed. */
+  readonly revealed = input<readonly number[]>([]);
+  readonly showKey = input(true);
+  readonly showTime = input(true);
+  readonly showTempo = input(true);
+  /** Selected bars (0-based, inclusive), outlined while concealed. */
+  readonly selection = input<{ from: number; to: number } | null>(null);
+  /** A bar was clicked (with Shift: extend the selection to it). */
+  readonly barSelect = output<{ bar: number; extend: boolean }>();
 
   protected readonly error = signal('');
-  private readonly boxes = signal<BarBox[]>([]);
+  protected readonly boxes = signal<BarBox[]>([]);
+  protected readonly revealedSet = computed(() => new Set(this.revealed()));
+  private readonly view = computed<ScoreView>(() => ({
+    concealed: this.concealed(),
+    revealed: this.revealedSet(),
+    showKey: this.showKey(),
+    showTime: this.showTime(),
+    showTempo: this.showTempo(),
+  }));
   private readonly host = viewChild.required<ElementRef<HTMLDivElement>>('host');
   private renderToken = 0;
 
-  protected readonly label = () => `Sheet music: ${this.piece().title}`;
+  // While concealed the title (which names the key and style) must not leak through the label.
+  protected readonly label = () =>
+    this.concealed() ? `Concealed score, ${this.piece().bars.length} bars` : `Sheet music: ${this.piece().title}`;
+  protected isSelected(bar: number): boolean {
+    const s = this.selection();
+    return s !== null && bar >= s.from && bar <= s.to;
+  }
+
   protected readonly highlight = () => {
     const i = this.activeBar();
     return i === null ? null : (this.boxes()[i] ?? null);
@@ -125,12 +201,13 @@ export class ScoreComponent {
   constructor() {
     effect(() => {
       const piece = this.piece();
+      const view = this.view();
       const el = this.host().nativeElement;
-      void this.render(piece, el);
+      void this.render(piece, view, el);
     });
   }
 
-  private async render(piece: Piece, el: HTMLDivElement): Promise<void> {
+  private async render(piece: Piece, view: ScoreView, el: HTMLDivElement): Promise<void> {
     const token = ++this.renderToken;
     // Font loading needs a real browser (not jsdom in unit tests).
     if (typeof document === 'undefined' || !document.fonts) return;
@@ -138,7 +215,7 @@ export class ScoreComponent {
       const vf = await loadVexFlow();
       if (token !== this.renderToken) return;
       el.replaceChildren();
-      this.boxes.set(drawPiece(vf, piece, el));
+      this.boxes.set(drawPiece(vf, piece, view, el));
       this.error.set('');
     } catch (e) {
       console.error(e);
@@ -168,7 +245,7 @@ function lineBreaks(count: number): number[][] {
   return out;
 }
 
-function drawPiece(vf: typeof VF, piece: Piece, el: HTMLDivElement): BarBox[] {
+function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTMLDivElement): BarBox[] {
   const { Renderer, Stave, StaveConnector, Formatter, BarlineType } = vf;
   const layout = lineBreaks(piece.bars.length);
   const lines = layout.length;
@@ -186,8 +263,10 @@ function drawPiece(vf: typeof VF, piece: Piece, el: HTMLDivElement): BarBox[] {
     svg.style.removeProperty('height');
   }
 
-  const keySpec = piece.key.id;
-  const timeSpec = `${piece.time.num}/${piece.time.den}`;
+  // With the key hidden, revealed notes carry all their accidentals explicitly.
+  const keySpec = view.showKey ? piece.key.id : null;
+  const accidentalSpec = keySpec ?? 'C';
+  const timeSpec = view.showTime ? `${piece.time.num}/${piece.time.den}` : null;
   const boxes: BarBox[] = [];
 
   for (let line = 0; line < lines; line++) {
@@ -195,28 +274,35 @@ function drawPiece(vf: typeof VF, piece: Piece, el: HTMLDivElement): BarBox[] {
     const y = TOP + line * SYSTEM_HEIGHT;
 
     // Width taken by clef, key and (first line) time signature.
-    const probeT = new Stave(LEFT, y, 400).addClef('treble').addKeySignature(keySpec);
-    const probeB = new Stave(LEFT, y + STAVE_GAP, 400).addClef('bass').addKeySignature(keySpec);
-    if (line === 0) {
+    const probeT = new Stave(LEFT, y, 400).addClef('treble');
+    const probeB = new Stave(LEFT, y + STAVE_GAP, 400).addClef('bass');
+    if (keySpec) {
+      probeT.addKeySignature(keySpec);
+      probeB.addKeySignature(keySpec);
+    }
+    if (line === 0 && timeSpec) {
       probeT.addTimeSignature(timeSpec);
       probeB.addTimeSignature(timeSpec);
     }
     Stave.formatBegModifiers([probeT, probeB]);
     const modifierWidth = probeT.getNoteStartX() - LEFT;
 
-    // Give each bar at least the room its notes need, then share out the rest evenly.
+    const available = PAGE_WIDTH - LEFT - RIGHT - modifierWidth;
+    // Concealed: equal widths, so the layout gives no hint of how busy a bar is.
+    // Otherwise give each bar at least the room its notes need, then share out the rest.
     const minWidths = bars.map((bar) => {
-      const built = buildBar(vf, piece, bar, keySpec);
+      if (view.concealed) return 0;
+      const built = buildBar(vf, piece, bar, accidentalSpec);
       const formatter = new Formatter().joinVoices(built.treble).joinVoices(built.bass);
       return formatter.preCalculateMinTotalWidth([...built.treble, ...built.bass]) + 36;
     });
-    const available = PAGE_WIDTH - LEFT - RIGHT - modifierWidth;
     const total = minWidths.reduce((a, b) => a + b, 0);
     // Spare room goes to bars in proportion to their length, so a one-beat upbeat stays narrow.
     const lengths = bars.map((bar) => bar.rh.reduce((a, n) => a + n.ticks, 0));
     const totalLength = lengths.reduce((a, b) => a + b, 0);
-    const widths =
-      total <= available
+    const widths = view.concealed
+      ? bars.map(() => available / bars.length)
+      : total <= available
         ? minWidths.map((w, i) => w + ((available - total) * lengths[i]) / totalLength)
         : minWidths.map((w) => (w * available) / total);
 
@@ -228,12 +314,19 @@ function drawPiece(vf: typeof VF, piece: Piece, el: HTMLDivElement): BarBox[] {
       const width = widths[i] + (first ? modifierWidth : 0);
       const treble = new Stave(x, y, width);
       const bass = new Stave(x, y + STAVE_GAP, width);
+      if (view.concealed) treble.setMeasure(barIndex + 1);
       if (first) {
-        treble.addClef('treble').addKeySignature(keySpec);
-        bass.addClef('bass').addKeySignature(keySpec);
-        if (line === 0) {
+        treble.addClef('treble');
+        bass.addClef('bass');
+        if (keySpec) {
+          treble.addKeySignature(keySpec);
+          bass.addKeySignature(keySpec);
+        }
+        if (line === 0 && timeSpec) {
           treble.addTimeSignature(timeSpec);
           bass.addTimeSignature(timeSpec);
+        }
+        if (line === 0 && view.showTempo) {
           const t = piece.tempo;
           treble.setTempo(
             {
@@ -260,18 +353,22 @@ function drawPiece(vf: typeof VF, piece: Piece, el: HTMLDivElement): BarBox[] {
       }
       new StaveConnector(treble, bass).setType(isFinal ? 'boldDoubleRight' : 'singleRight').setContext(ctx).draw();
 
-      const built = buildBar(vf, piece, bar, keySpec, barIndex === 0 ? piece.dynamic : undefined);
-      built.treble.forEach((v) => v.setStave(treble));
-      built.bass.forEach((v) => v.setStave(bass));
-      const justify = treble.getNoteEndX() - treble.getNoteStartX() - 14;
-      new Formatter()
-        .joinVoices(built.treble)
-        .joinVoices(built.bass)
-        .format([...built.treble, ...built.bass], justify);
-      built.treble.forEach((v) => v.draw(ctx, treble));
-      built.bass.forEach((v) => v.draw(ctx, bass));
-      built.beams.forEach((b) => b.setContext(ctx).draw());
-      built.ties.forEach((t) => t.setContext(ctx).draw());
+      // A concealed bar keeps its staves and barlines but none of its notes.
+      if (!view.concealed || view.revealed.has(barIndex)) {
+        const dynamic = barIndex === 0 && !view.concealed ? piece.dynamic : undefined;
+        const built = buildBar(vf, piece, bar, accidentalSpec, dynamic);
+        built.treble.forEach((v) => v.setStave(treble));
+        built.bass.forEach((v) => v.setStave(bass));
+        const justify = treble.getNoteEndX() - treble.getNoteStartX() - 14;
+        new Formatter()
+          .joinVoices(built.treble)
+          .joinVoices(built.bass)
+          .format([...built.treble, ...built.bass], justify);
+        built.treble.forEach((v) => v.draw(ctx, treble));
+        built.bass.forEach((v) => v.draw(ctx, bass));
+        built.beams.forEach((b) => b.setContext(ctx).draw());
+        built.ties.forEach((t) => t.setContext(ctx).draw());
+      }
 
       const top = y + 10;
       const bottom = y + STAVE_GAP + 90;
