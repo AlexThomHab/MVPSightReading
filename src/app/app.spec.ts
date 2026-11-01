@@ -35,4 +35,26 @@ describe('App', () => {
     await fixture.whenStable();
     expect(new URLSearchParams(location.search).get('seed')).not.toBe('spec');
   });
+
+  it('opens Ear Training on the same piece, hiding everything that gives it away, and returns', async () => {
+    const fixture = TestBed.createComponent(App);
+    await fixture.whenStable();
+    const el = fixture.nativeElement as HTMLElement;
+    const title = el.querySelector('.sheet h2')!.textContent!;
+    const press = async (text: string) => {
+      [...el.querySelectorAll('button')].find((b) => b.textContent?.includes(text))!.click();
+      await fixture.whenStable();
+    };
+
+    await press('Ear training');
+    expect(el.querySelector('app-ear-training')).not.toBeNull();
+    expect(el.querySelector('.toolbar')).toBeNull();
+    expect(el.querySelector('.analysis')).toBeNull();
+    expect(el.textContent).not.toContain(title);
+
+    await press('Exit ear training');
+    expect(el.querySelector('app-ear-training')).toBeNull();
+    expect(el.querySelector('.sheet h2')!.textContent).toBe(title);
+    expect(new URLSearchParams(location.search).get('seed')).toBe('spec');
+  });
 });

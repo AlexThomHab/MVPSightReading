@@ -3,6 +3,12 @@
   <p class="tagline">A new piano piece for Grades 1–5, every time.</p>
 </header>
 
+@if (earMode()) {
+  @if (playback.usingSynth()) {
+    <p class="notice">Piano samples could not be loaded, so playback is using a simple synthesiser.</p>
+  }
+  <app-ear-training [piece]="piece()" (exit)="leaveEarTraining()" />
+} @else {
 <section class="toolbar" aria-label="Piece settings">
   <div class="field">
     <span class="field-label" id="grade-label">Grade</span>
@@ -62,6 +68,7 @@
       }
     </button>
     <button type="button" (click)="print()">Print</button>
+    <button type="button" (click)="enterEarTraining()">Ear training</button>
   </div>
 
   <label class="field tempo">
@@ -103,3 +110,4 @@
     }
   </ol>
 </section>
+}

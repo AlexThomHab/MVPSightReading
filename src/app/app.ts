@@ -4,6 +4,7 @@ import { GRADES, Grade, TIME_SIGNATURES, TimeSignatureId } from './music/grades'
 import { freshSeed } from './music/random';
 import { STYLES, STYLE_IDS, StyleId } from './music/styles';
 import { keyById, keyName } from './music/theory';
+import { EarTrainingComponent } from './ear-training/ear-training.component';
 import { PlaybackService } from './playback/playback.service';
 import { ScoreComponent } from './score/score.component';
 
@@ -40,7 +41,7 @@ const SEQUENCE_NAMES: Record<SequenceName, string> = {
 
 @Component({
   selector: 'app-root',
-  imports: [ScoreComponent],
+  imports: [ScoreComponent, EarTrainingComponent],
   templateUrl: './app.html',
   styleUrl: './app.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -135,6 +136,19 @@ export class App {
       this.piece();
       untracked(() => this.playback.stop());
     });
+  }
+
+  /** Ear Training mode: the same piece, concealed, with bar-level playback and reveals. */
+  protected readonly earMode = signal(false);
+
+  protected enterEarTraining(): void {
+    this.playback.stop();
+    this.earMode.set(true);
+  }
+
+  protected leaveEarTraining(): void {
+    this.playback.stop();
+    this.earMode.set(false);
   }
 
   protected newPiece(): void {

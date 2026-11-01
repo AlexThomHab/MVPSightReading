@@ -1,7 +1,7 @@
 import { Injectable, signal } from '@angular/core';
 import type * as ToneNS from 'tone';
 import { Piece } from '../music/generator';
-import { midi } from '../music/theory';
+import { PlayOptions, buildSchedule } from './schedule';
 
 type Tone = typeof ToneNS;
 type Instrument = ToneNS.Sampler | ToneNS.PolySynth;
@@ -21,25 +21,34 @@ function sampleUrls(): Record<string, string> {
   return urls;
 }
 
+export interface PlaybackRequest extends PlayOptions {
+  /** Play the same bars again, without a count-in, until stopped. */
+  loop?: boolean;
+}
+
 /**
- * Plays a Piece with Tone.js: a one-bar count-in click, then both hands.
+ * Plays a Piece, or a range of its bars, with Tone.js: a count-in click, then the music.
  * Uses piano samples, falling back to a synth if they fail to load.
  */
 @Injectable({ providedIn: 'root' })
 export class PlaybackService {
+  /** True while playing or paused (i.e. until stopped or finished). */
   readonly playing = signal(false);
+  readonly paused = signal(false);
   readonly loading = signal(false);
   /** True once we have fallen back to the synthesiser. */
   readonly usingSynth = signal(false);
   /** Index of the bar currently sounding, or null (count-in, stopped). */
   readonly currentBar = signal<number | null>(null);
+  /** True while the count-in clicks are sounding. */
+  readonly countingIn = signal(false);
 
   private tone?: Tone;
   private piano?: Instrument;
   private click?: ToneNS.Synth;
   private runId = 0;
 
-  async play(piece: Piece, bpm: number): Promise<void> {
+  async play(piece: Piece, bpm: number, request: PlaybackRequest = {}): Promise<void> {
     this.stop();
     const run = ++this.runId;
     const Tone = await this.loadTone();
@@ -48,74 +57,62 @@ export class PlaybackService {
     if (run !== this.runId) return;
 
     const transport = Tone.getTransport();
-    const draw = Tone.getDraw();
-    const secondsPerTick = 60 / bpm / piece.time.beatTicks;
-    const beatSeconds = secondsPerTick * piece.time.beatTicks;
-    // An upbeat (chorales) is counted in from the rest of its bar.
-    const barTicks = piece.bars.map((b) => b.rh.reduce((a, n) => a + n.ticks, 0));
-    const clicks = (piece.time.barTicks - (barTicks[0] < piece.time.barTicks ? barTicks[0] : 0)) / piece.time.beatTicks;
-    const countIn = (clicks || piece.time.beatsPerBar) * beatSeconds;
+    // UI updates run on a timer lined up with the audio clock. (Tone's Draw waits for
+    // animation frames, which never come while the window is in the background.)
+    const atAudioTime = (time: number, fn: () => void) => {
+      setTimeout(() => {
+        if (run === this.runId) fn();
+      }, Math.max(0, (time - Tone.immediate()) * 1000));
+    };
+    const schedule = buildSchedule(piece, bpm, request);
 
-    // Count-in clicks, the first accented.
-    for (let beat = 0; beat < clicks; beat++) {
-      transport.schedule((time) => {
-        this.click?.triggerAttackRelease(beat === 0 ? 'C6' : 'G5', 0.03, time);
-      }, beat * beatSeconds);
+    this.countingIn.set(schedule.clicks.length > 0);
+    for (const c of schedule.clicks) {
+      transport.schedule((time) => this.click?.triggerAttackRelease(c.accent ? 'C6' : 'G5', 0.03, time), c.time);
     }
-
-    // Fermatas hold the chord for longer and delay everything after them.
-    const fermataEnds: number[] = [];
-    const fermataHold = beatSeconds * 0.9;
-    let t = 0;
-    for (const bar of piece.bars) {
-      for (const n of bar.rh) {
-        if (n.fermata) fermataEnds.push(t + n.ticks);
-        t += n.ticks;
-      }
+    for (const b of schedule.bars) {
+      transport.schedule(
+        (time) =>
+          atAudioTime(time, () => {
+            this.countingIn.set(false);
+            this.currentBar.set(b.bar);
+          }),
+        b.time,
+      );
     }
-    const timeOf = (tick: number) => countIn + tick * secondsPerTick + fermataHold * fermataEnds.filter((e) => e <= tick).length;
-
-    const barStarts: number[] = [];
-    barTicks.reduce((start, ticks, i) => ((barStarts[i] = start), start + ticks), 0);
-    piece.bars.forEach((_, barIndex) => {
-      transport.schedule((time) => draw.schedule(() => this.currentBar.set(barIndex), time), timeOf(barStarts[barIndex]));
-    });
-
-    // Each voice: chorales have four, piano music two (right and left hand).
-    const first = piece.bars[0];
-    const voices: [keyof NonNullable<typeof first.voices> | 'rh' | 'lh', number][] = first.voices
-      ? [['s', 0.72], ['a', 0.5], ['t', 0.5], ['b', 0.62]]
-      : [['rh', 0.75], ['lh', 0.55]];
-    for (const [name, velocity] of voices) {
-      const notes = piece.bars.flatMap((bar, i) => {
-        const list = name === 'rh' || name === 'lh' ? bar[name] : bar.voices![name];
-        let tick = barStarts[i];
-        return list.map((note) => ({ note, start: (tick += note.ticks) - note.ticks }));
-      });
-      for (let i = 0; i < notes.length; i++) {
-        const { note, start } = notes[i];
-        if (note.rest) continue;
-        // A tied note sounds once, for the combined length.
-        let end = start + note.ticks;
-        let last = note;
-        while (last.tie && notes[i + 1]) {
-          i++;
-          last = notes[i].note;
-          end = notes[i].start + last.ticks;
-        }
-        const names = note.pitches.map((p) => Tone.Frequency(midi(p), 'midi').toNote());
-        // timeOf() already adds the fermata's hold at the end of a fermata note.
-        const duration = (timeOf(end) - timeOf(start)) * 0.95;
-        transport.schedule((time) => piano.triggerAttackRelease(names, duration, time, velocity), timeOf(start));
-      }
+    for (const n of schedule.notes) {
+      const names = n.midis.map((m) => Tone.Frequency(m, 'midi').toNote());
+      transport.schedule((time) => piano.triggerAttackRelease(names, n.duration, time, n.velocity), n.time);
     }
-
-    const end = timeOf(t);
-    transport.schedule((time) => draw.schedule(() => this.finish(run), time), end + 0.3);
+    transport.schedule(
+      (time) =>
+        atAudioTime(time, () => {
+          if (request.loop) {
+            // Repeat the selection straight away, without counting in again.
+            void this.play(piece, bpm, { ...request, countIn: false });
+          } else {
+            this.stop();
+          }
+        }),
+      schedule.end + (request.loop ? 0.6 : 0.3),
+    );
 
     transport.position = 0;
     transport.start('+0.1');
     this.playing.set(true);
+  }
+
+  pause(): void {
+    if (!this.tone || !this.playing() || this.paused()) return;
+    this.tone.getTransport().pause();
+    this.piano?.releaseAll();
+    this.paused.set(true);
+  }
+
+  resume(): void {
+    if (!this.tone || !this.paused()) return;
+    this.tone.getTransport().start();
+    this.paused.set(false);
   }
 
   stop(): void {
@@ -127,12 +124,9 @@ export class PlaybackService {
       this.piano?.releaseAll();
     }
     this.playing.set(false);
+    this.paused.set(false);
+    this.countingIn.set(false);
     this.currentBar.set(null);
-  }
-
-  private finish(run: number): void {
-    if (run !== this.runId) return;
-    this.stop();
   }
 
   private async loadTone(): Promise<Tone> {
