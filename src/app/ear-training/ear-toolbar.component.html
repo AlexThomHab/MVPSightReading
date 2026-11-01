@@ -1,0 +1,48 @@
+<section class="ear-toolbar" aria-label="Ear training">
+  <div class="group" aria-label="Listen">
+    <span class="group-label">Listen</span>
+    <span class="selection" aria-live="polite">{{ ear.selectionLabel() }}</span>
+    <button type="button" (click)="ear.selectAll()">Select all</button>
+    <button type="button" (click)="ear.clearSelection()" [disabled]="!ear.selection()">Clear selection</button>
+    <button type="button" class="play" (click)="togglePlay.emit()" [attr.aria-pressed]="playback.playing()">
+      {{ playback.playing() || playback.loading() ? '■ Stop' : '▶ Play' }}
+    </button>
+    <button type="button" (click)="togglePause()" [disabled]="!playback.playing() || playback.loading()">
+      {{ playback.paused() ? 'Resume' : 'Pause' }}
+    </button>
+    <label class="toggle">
+      <input type="checkbox" [checked]="ear.loop()" (change)="ear.loop.set($any($event.target).checked)" />
+      Repeat selection
+    </label>
+    <label class="toggle">
+      <input type="checkbox" [checked]="ear.countIn()" (change)="ear.countIn.set($any($event.target).checked)" />
+      Count-in
+    </label>
+    <span class="status" role="status" aria-live="polite">{{ status() }}</span>
+  </div>
+
+  <div class="group" aria-label="Hints">
+    <span class="group-label">Hints</span>
+    <label class="toggle">
+      <input type="checkbox" [checked]="ear.showKey()" (change)="ear.showKey.set($any($event.target).checked)" />
+      Show key
+    </label>
+    <label class="toggle">
+      <input type="checkbox" [checked]="ear.showTime()" (change)="ear.showTime.set($any($event.target).checked)" />
+      Show time signature
+    </label>
+  </div>
+
+  <div class="group" aria-label="Reveal">
+    <span class="group-label">Reveal</span>
+    <button type="button" (click)="ear.revealSelected()" [disabled]="!ear.selection()">Reveal selected</button>
+    <button type="button" (click)="ear.revealNext()" [disabled]="ear.next() === null">
+      Reveal next bar{{ ear.next() !== null ? ' (' + (ear.next()! + 1) + ')' : '' }}
+    </button>
+    <button type="button" (click)="ear.revealAll()" [disabled]="ear.revealed().length === ear.barCount()">Reveal all</button>
+    <button type="button" (click)="ear.resetReveals()" [disabled]="!ear.revealed().length">Reset reveals</button>
+    <span class="count">{{ ear.revealed().length }} of {{ ear.barCount() }} revealed</span>
+  </div>
+
+  <p class="help">Click a bar to select it; click another to extend the selection to it, or drag across bars.</p>
+</section>

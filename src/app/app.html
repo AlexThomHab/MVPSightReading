@@ -3,12 +3,6 @@
   <p class="tagline">A new piano piece for Grades 1–5, every time.</p>
 </header>
 
-@if (earMode()) {
-  @if (playback.usingSynth()) {
-    <p class="notice">Piano samples could not be loaded, so playback is using a simple synthesiser.</p>
-  }
-  <app-ear-training [piece]="piece()" (exit)="leaveEarTraining()" />
-} @else {
 <section class="toolbar" aria-label="Piece settings">
   <div class="field">
     <span class="field-label" id="grade-label">Grade</span>
@@ -58,7 +52,11 @@
 
   <div class="actions">
     <button type="button" class="primary" (click)="newPiece()">New piece</button>
-    <button type="button" (click)="togglePlay()" [attr.aria-pressed]="playback.playing()">
+    <button
+      type="button"
+      (click)="togglePlay()"
+      [attr.aria-pressed]="playback.playing()"
+    >
       @if (playback.loading()) {
         Loading piano…
       } @else if (playback.playing()) {
@@ -68,11 +66,13 @@
       }
     </button>
     <button type="button" (click)="print()">Print</button>
-    <button type="button" (click)="enterEarTraining()">Ear training</button>
+    <button type="button" (click)="toggleEarTraining()" [attr.aria-pressed]="ear.active()">
+      {{ ear.active() ? 'Exit ear training' : 'Ear training' }}
+    </button>
   </div>
 
   <label class="field tempo">
-    <span class="field-label">Tempo {{ beatLabel() }} = {{ bpm() }}</span>
+    <span class="field-label">{{ tempoLabel() }}</span>
     <input
       type="range"
       [min]="tempoRange().min"
@@ -83,21 +83,40 @@
   </label>
 </section>
 
+@if (ear.active()) {
+  <app-ear-toolbar (togglePlay)="togglePlay()" />
+  @if (pendingSettings()) {
+    <p class="notice">Your new settings will be used when you click New piece.</p>
+  }
+}
+
 @if (playback.usingSynth()) {
   <p class="notice">Piano samples could not be loaded, so playback is using a simple synthesiser.</p>
 }
 
 <main class="sheet">
   <header class="sheet-header">
-    <h2>{{ piece().title }}</h2>
+    <h2>{{ sheetTitle() }}</h2>
     <p class="sheet-meta">
       <span>{{ subtitle() }}</span>
       <span class="seed">Seed {{ piece().seed }}</span>
     </p>
   </header>
-  <app-score [piece]="piece()" [activeBar]="playback.currentBar()" />
+  <app-score
+    [piece]="piece()"
+    [activeBar]="playback.currentBar()"
+    [concealed]="ear.active()"
+    [revealed]="ear.revealed()"
+    [showKey]="!ear.active() || ear.showKey()"
+    [showTime]="!ear.active() || ear.showTime()"
+    [showTempo]="!ear.active()"
+    [selection]="ear.active() ? ear.selection() : null"
+    (barClick)="ear.clickBar($event)"
+    (barDrag)="ear.dragBars($event.anchor, $event.bar)"
+  />
 </main>
 
+@if (!ear.active()) {
 <section class="analysis" aria-label="Phrase analysis">
   <h3>Analysis</h3>
   <ol>
