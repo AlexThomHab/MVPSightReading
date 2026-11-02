@@ -1,6 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { generatePiece } from '../music/generator';
-import { BarBox, ScoreComponent } from './score.component';
+import { BarBox } from './engraving';
+import { ScoreComponent } from './score.component';
 
 /**
  * Bar selection gestures on the concealed score. VexFlow cannot draw in jsdom, so the bar

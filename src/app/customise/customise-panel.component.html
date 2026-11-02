@@ -1,0 +1,245 @@
+<section class="panel" aria-labelledby="customise-title">
+  <header class="panel-header">
+    <div>
+      <h2 id="customise-title">Customise</h2>
+      <p class="status">
+        @if (customised()) {
+          Custom settings for Grade {{ grade() }} — anything you haven't changed follows the grade.
+        } @else {
+          Using the Grade {{ grade() }} defaults. Change any setting to override it.
+        }
+      </p>
+    </div>
+    <div class="header-actions">
+      <button type="button" (click)="reset()" [disabled]="!customised()">Reset to grade defaults</button>
+      <button type="button" class="close" (click)="closed.emit()" aria-label="Close the customise panel">✕</button>
+    </div>
+  </header>
+
+  <div class="sections">
+    <!-- Rhythm -->
+    <fieldset class="section">
+      <legend>
+        Rhythm
+        @if (isCustom('rhythm')) {
+          <button type="button" class="badge" (click)="resetSection('rhythm')" title="Return this section to the grade's defaults">Custom ✕</button>
+        }
+      </legend>
+
+      <span class="label" id="notes-label">Note values</span>
+      <div class="tiles" role="group" aria-labelledby="notes-label">
+        @for (t of noteTiles; track t.id) {
+          <button type="button" class="tile" [class.on]="noteOn(t)" [attr.aria-pressed]="noteOn(t)" [attr.aria-label]="t.name" [title]="t.name" (click)="toggleNote(t)">
+            <span class="music" aria-hidden="true">{{ t.glyph }}@if (t.dotted) {<span class="dot">{{ dot }}</span>}</span>
+          </button>
+        }
+      </div>
+
+      <span class="label" id="rests-label">Rests</span>
+      <div class="tiles" role="group" aria-labelledby="rests-label">
+        @for (t of restTiles; track t.id) {
+          <button type="button" class="tile rest" [class.lined]="t.ticks >= 8" [class.on]="restOn(t)" [attr.aria-pressed]="restOn(t)" [attr.aria-label]="t.name.replace('note', 'rest') + ' rest'" [title]="t.name.split(' (')[0] + ' rest'" (click)="toggleRest(t)">
+            <span class="music" aria-hidden="true">{{ t.glyph }}@if (t.dotted) {<span class="dot">{{ dot }}</span>}</span>
+          </button>
+        }
+      </div>
+
+      <span class="label" id="difficulty-label">Rhythmic difficulty</span>
+      <div class="segmented" role="radiogroup" aria-labelledby="difficulty-label">
+        @for (d of difficultyOptions; track d.id) {
+          <button type="button" role="radio" [attr.aria-checked]="resolved().rhythmicDifficulty === d.id" [class.selected]="resolved().rhythmicDifficulty === d.id" (click)="set('rhythmicDifficulty', d.id)">
+            {{ d.label }}
+          </button>
+        }
+      </div>
+
+      <div class="switches">
+        <label class="switch">
+          <input type="checkbox" role="switch" [checked]="toggleOn('syncopation')" (change)="flip('syncopation')" />
+          <span>Syncopation</span>
+        </label>
+        <label class="switch">
+          <input type="checkbox" role="switch" [checked]="toggleOn('ties')" (change)="flip('ties')" />
+          <span>Ties</span>
+        </label>
+      </div>
+      <ng-container *ngTemplateOutlet="issueList; context: { $implicit: issuesIn('rhythm') }" />
+    </fieldset>
+
+    <!-- Metre -->
+    <fieldset class="section">
+      <legend>
+        Metre
+        @if (isCustom('metre')) {
+          <button type="button" class="badge" (click)="resetSection('metre')" title="Return this section to the grade's defaults">Custom ✕</button>
+        }
+      </legend>
+      <span class="label" id="times-label">Time signatures a piece may use</span>
+      <div class="tiles" role="group" aria-labelledby="times-label">
+        @for (c of timeChips; track c.id) {
+          <button type="button" class="tile time" [class.on]="timeOn(c.id)" [attr.aria-pressed]="timeOn(c.id)" [attr.aria-label]="c.id + ' time'" [title]="c.id" (click)="toggleTime(c.id)">
+            <span class="music stack" aria-hidden="true"><span>{{ c.num }}</span><span>{{ c.den }}</span></span>
+          </button>
+        }
+      </div>
+      <p class="hint">Grade {{ grade() }} uses {{ gradeTimes().join(', ') }}. The Time menu picks one of these, or Random chooses among them.</p>
+      <ng-container *ngTemplateOutlet="issueList; context: { $implicit: issuesIn('metre') }" />
+    </fieldset>
+
+    <!-- Pitch range -->
+    <fieldset class="section wide">
+      <legend>
+        Pitch range
+        @if (isCustom('range')) {
+          <button type="button" class="badge" (click)="resetSection('range')" title="Return this section to the grade's defaults">Custom ✕</button>
+        }
+      </legend>
+      <span class="label">{{ value().separateHands ? 'Right hand' : 'Melody' }}</span>
+      <app-pitch-range [label]="value().separateHands ? 'right-hand' : 'melody'" clef="treble" [range]="melodyRange()" (rangeChange)="setRange('melodyRange', $event)" />
+      @if (!value().melodyRange) {
+        <p class="hint">The grade's usual span, shown in C major; in other keys it moves with the key.</p>
+      }
+
+      <label class="switch">
+        <input type="checkbox" role="switch" [checked]="!!value().separateHands" (change)="setSeparateHands(!value().separateHands)" />
+        <span>Configure hands separately</span>
+      </label>
+
+      @if (value().separateHands) {
+        <span class="label">Left hand</span>
+        <app-pitch-range label="left-hand" clef="bass" [range]="bassRange()" (rangeChange)="setRange('bassRange', $event)" />
+        <label class="inline-field">
+          <span class="label">Largest left-hand leap</span>
+          <select [value]="resolved().bassMaxLeap" (change)="set('bassMaxLeap', +$any($event.target).value)">
+            @for (s of sizes; track s) {
+              <option [value]="s" [selected]="s === resolved().bassMaxLeap">{{ intervalNames[s] }}</option>
+            }
+          </select>
+        </label>
+      }
+      <ng-container *ngTemplateOutlet="issueList; context: { $implicit: issuesIn('range') }" />
+    </fieldset>
+
+    <!-- Melodic leaps -->
+    <fieldset class="section">
+      <legend>
+        Melodic leaps
+        @if (isCustom('leaps')) {
+          <button type="button" class="badge" (click)="resetSection('leaps')" title="Return this section to the grade's defaults">Custom ✕</button>
+        }
+      </legend>
+      <div class="segmented" role="radiogroup" aria-label="How leaps are chosen">
+        <button type="button" role="radio" [attr.aria-checked]="leapMode() === 'max'" [class.selected]="leapMode() === 'max'" (click)="setLeapMode('max')">Largest leap</button>
+        <button type="button" role="radio" [attr.aria-checked]="leapMode() === 'custom'" [class.selected]="leapMode() === 'custom'" (click)="setLeapMode('custom')">Choose intervals</button>
+      </div>
+
+      @if (leapMode() === 'max') {
+        <label class="inline-field">
+          <span class="label">Up to</span>
+          <select [value]="resolved().maxLeap" (change)="set('maxLeap', +$any($event.target).value)">
+            @for (s of sizes; track s) {
+              <option [value]="s" [selected]="s === resolved().maxLeap">{{ intervalNames[s] }}</option>
+            }
+          </select>
+        </label>
+        <p class="hint">Any interval up to this, rising or falling.</p>
+      } @else {
+        @for (dir of ['ascending', 'descending']; track dir) {
+          <span class="label" [id]="dir + '-label'">{{ dir === 'ascending' ? 'Rising ↑' : 'Falling ↓' }}</span>
+          <div class="chips" role="group" [attr.aria-labelledby]="dir + '-label'">
+            @for (s of sizes; track s) {
+              <button type="button" class="chip" [class.on]="intervalOn($any(dir), s)" [attr.aria-pressed]="intervalOn($any(dir), s)" (click)="toggleInterval($any(dir), s)">
+                {{ intervalNames[s] }}
+              </button>
+            }
+          </div>
+        }
+        <label class="switch">
+          <input type="checkbox" role="switch" [checked]="repeatedNotes()" (change)="toggleRepeatedNotes()" />
+          <span>Repeated notes</span>
+        </label>
+      }
+      <ng-container *ngTemplateOutlet="issueList; context: { $implicit: issuesIn('leaps') }" />
+    </fieldset>
+
+    <!-- Hand independence -->
+    <fieldset class="section">
+      <legend>
+        Hand independence
+        @if (isCustom('hands')) {
+          <button type="button" class="badge" (click)="resetSection('hands')" title="Return this section to the grade's defaults">Custom ✕</button>
+        }
+      </legend>
+      <div class="segmented" role="radiogroup" aria-label="Rhythmic independence of the hands">
+        @for (o of independenceOptions; track o.id) {
+          <button type="button" role="radio" [attr.aria-checked]="resolved().independence === o.id" [class.selected]="resolved().independence === o.id" (click)="set('independence', o.id)">
+            {{ o.label }}
+          </button>
+        }
+      </div>
+      @for (o of independenceOptions; track o.id) {
+        @if (resolved().independence === o.id) {
+          <p class="hint">{{ o.hint }}</p>
+        }
+      }
+      <ng-container *ngTemplateOutlet="issueList; context: { $implicit: issuesIn('hands') }" />
+    </fieldset>
+
+    <!-- Expression -->
+    <fieldset class="section">
+      <legend>
+        Musical expression
+        @if (isCustom('expression')) {
+          <button type="button" class="badge" (click)="resetSection('expression')" title="Return this section to the grade's defaults">Custom ✕</button>
+        }
+      </legend>
+      <div class="switches">
+        <label class="switch">
+          <input type="checkbox" role="switch" [checked]="toggleOn('accidentals')" (change)="flip('accidentals')" />
+          <span>Accidentals</span>
+        </label>
+        <label class="switch">
+          <input type="checkbox" role="switch" [checked]="toggleOn('dynamics')" (change)="flip('dynamics')" />
+          <span>Dynamics</span>
+        </label>
+      </div>
+      <span class="label">Articulation</span>
+      <div class="switches">
+        @for (t of articulationToggles; track t.id) {
+          <label class="switch">
+            <input type="checkbox" role="switch" [checked]="toggleOn(t.id)" (change)="flip(t.id)" />
+            <span>{{ t.label }}</span>
+          </label>
+        }
+      </div>
+      <p class="hint">Switched-on marks appear where the grade and style use them.</p>
+      <ng-container *ngTemplateOutlet="issueList; context: { $implicit: issuesIn('expression') }" />
+    </fieldset>
+  </div>
+
+  <footer class="panel-footer">
+    <p class="footer-status" aria-live="polite">
+      @if (errorCount()) {
+        {{ errorCount() === 1 ? 'One setting needs' : errorCount() + ' settings need' }} changing before a piece can be written.
+      } @else if (pending()) {
+        These settings will be used for the next piece.
+      } @else {
+        The piece on screen uses these settings.
+      }
+    </p>
+    <button type="button" class="primary" (click)="apply.emit()" [disabled]="errorCount() > 0">New piece with these settings</button>
+  </footer>
+</section>
+
+<ng-template #issueList let-list>
+  @if (list.length) {
+    <ul class="issues">
+      @for (issue of list; track issue.message) {
+        <li [class.error]="issue.severity === 'error'" [class.warning]="issue.severity === 'warning'">
+          <span class="issue-icon" aria-hidden="true">{{ issue.severity === 'error' ? '!' : 'i' }}</span>
+          <span><span class="visually-hidden">{{ issue.severity === 'error' ? 'Problem: ' : 'Note: ' }}</span>{{ issue.message }}</span>
+        </li>
+      }
+    </ul>
+  }
+</ng-template>

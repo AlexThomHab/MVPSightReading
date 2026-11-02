@@ -1,6 +1,6 @@
 import { Injectable, signal } from '@angular/core';
 import type * as ToneNS from 'tone';
-import { Piece } from '../music/generator';
+import { Piece } from '../music/model';
 import { PlayOptions, buildSchedule } from './schedule';
 
 type Tone = typeof ToneNS;

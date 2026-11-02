@@ -15,100 +15,38 @@
  *
  * Pure TypeScript and deterministic from the seed, like the piano generator.
  */
-import type { Bar, Cadence, Note, PhraseInfo, Piece, Settings } from './generator';
-import { GRADE_SPECS, Grade, TIME_SIGNATURES } from './grades';
+import type { Bar, Cadence, Note, PhraseInfo, Piece, Settings } from './model';
+import { Grade, TIME_SIGNATURES } from './grades';
+import { CHORD_SHAPES, ChordQuality, HarmonicFunction, PC, TonalKey, degreeOfLetter, pcAbove, pcName, pcOf, pitchesOf, samePc, scaleDegreePc } from './pitch-class';
+import { GenerationConstraints, PitchRange, constraintsOf, effectiveSpec, melodicIntervalAllowed } from './constraints';
 import { Random } from './random';
-import { KEYS, Key, LETTERS, Mode, Pitch, accidentalSymbol, diatonicIndex, isSingableInterval, midi, mod } from './theory';
+import { KEYS, Key, LETTERS, Mode, Pitch, diatonicIndex, isSingableInterval, midi, mod } from './theory';
 
 // ---------------------------------------------------------------------------
 // Pitch classes and keys
 // ---------------------------------------------------------------------------
 
-/** A spelled pitch class: letter index (0 = C … 6 = B) and alteration. */
-interface PC {
-  l: number;
-  a: number;
-}
-
-const NATURAL = [0, 2, 4, 5, 7, 9, 11];
-const pcSemis = (p: PC) => mod(NATURAL[p.l] + p.a, 12);
-const samePc = (x: PC, y: PC) => x.l === y.l && x.a === y.a;
-const pcOf = (p: Pitch): PC => ({ l: LETTERS.indexOf(p.letter), a: p.alter });
-const pcName = (p: PC) => `${LETTERS[p.l]}${accidentalSymbol(p.a)}`;
-
-/** The pitch class `steps` letters and `semis` semitones above `p`, correctly spelled. */
-function up(p: PC, steps: number, semis: number): PC {
-  const l = mod(p.l + steps, 7);
-  let a = mod(pcSemis(p) + semis - NATURAL[l], 12);
-  if (a > 6) a -= 12;
-  return { l, a };
-}
-
-/** Every pitch of a pitch class within a MIDI range. */
-function pitchesOf(pc: PC, lo: number, hi: number): Pitch[] {
-  const out: Pitch[] = [];
-  for (let octave = 1; octave <= 6; octave++) {
-    const p: Pitch = { letter: LETTERS[pc.l], alter: pc.a, octave };
-    const m = midi(p);
-    if (m >= lo && m <= hi) out.push(p);
-  }
-  return out;
-}
-
-/** A key the music is in locally (the home key, or one a phrase modulates to). */
-interface LKey {
-  tonic: PC;
-  mode: Mode;
-}
-
-const MAJOR_STEPS = [0, 2, 4, 5, 7, 9, 11];
-const MINOR_STEPS = [0, 2, 3, 5, 7, 8, 10];
-
-/** Scale degree `deg` (0–6) of a key; in minor, `raise` gives the melodic-minor 6th/7th. */
-function degreePc(k: LKey, deg: number, raise = false): PC {
-  const d = mod(deg, 7);
-  let semis = (k.mode === 'major' ? MAJOR_STEPS : MINOR_STEPS)[d];
-  if (raise && k.mode === 'minor' && (d === 5 || d === 6)) semis += 1;
-  return up(k.tonic, d, semis);
-}
-
-const keyLabel = (k: LKey) => `${pcName(k.tonic)} ${k.mode}`;
-const sameKey = (x: LKey, y: LKey) => samePc(x.tonic, y.tonic) && x.mode === y.mode;
-/** Scale degree (0–6) of a letter in a key. */
-const degreeOfLetter = (k: LKey, l: number) => mod(l - k.tonic.l, 7);
+const keyLabel = (k: TonalKey) => `${pcName(k.tonic)} ${k.mode}`;
+const sameKey = (x: TonalKey, y: TonalKey) => samePc(x.tonic, y.tonic) && x.mode === y.mode;
 
 // ---------------------------------------------------------------------------
 // Chords
 // ---------------------------------------------------------------------------
-
-type Quality = 'M' | 'm' | 'd' | 'D7' | 'm7' | 'h7' | 'd7';
-type Fn = 'T' | 'S' | 'D';
-
-/** Intervals above the root as [letter steps, semitones]. */
-const SHAPES: Record<Quality, [number, number][]> = {
-  M: [[0, 0], [2, 4], [4, 7]],
-  m: [[0, 0], [2, 3], [4, 7]],
-  d: [[0, 0], [2, 3], [4, 6]],
-  D7: [[0, 0], [2, 4], [4, 7], [6, 10]],
-  m7: [[0, 0], [2, 3], [4, 7], [6, 10]],
-  h7: [[0, 0], [2, 3], [4, 6], [6, 10]],
-  d7: [[0, 0], [2, 3], [4, 6], [6, 9]],
-};
 
 interface HChord {
   /** Roman numeral with figures, e.g. "V65", "ii6", "V7/V", "vii°7". */
   label: string;
   /** The numeral without figures, e.g. "V" or "V/V" — equal for the same chord in any inversion. */
   base: string;
-  key: LKey;
+  key: TonalKey;
   /** Scale degree of the root in `key`. */
   rootDeg: number;
   /** Root, third, fifth and (if any) seventh. */
   tones: PC[];
   /** Index into `tones` of the bass note: 0 root position, 1 first inversion, … */
   inversion: number;
-  quality: Quality;
-  fn: Fn;
+  quality: ChordQuality;
+  fn: HarmonicFunction;
   /** For dominant-function chords: the scale degree whose chord they resolve to. */
   resolvesTo?: number;
   /** The leading note, which should rise a semitone when the chord resolves. */
@@ -124,7 +62,7 @@ const NUMERALS = ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii'];
 const TRIAD_FIGURES = ['', '6'];
 const SEVENTH_FIGURES = ['7', '65', '43', '42'];
 
-function numeral(deg: number, q: Quality): string {
+function numeral(deg: number, q: ChordQuality): string {
   const n = NUMERALS[deg];
   let s = q === 'M' || q === 'D7' ? n.toUpperCase() : n;
   if (q === 'd' || q === 'd7') s += '°';
@@ -134,8 +72,8 @@ function numeral(deg: number, q: Quality): string {
 
 interface ChordSpec {
   deg: number;
-  q: Quality;
-  fn: Fn;
+  q: ChordQuality;
+  fn: HarmonicFunction;
   inversions: number[];
   /** Raise the root (minor-key vii°: the leading note). */
   raiseRoot?: boolean;
@@ -175,7 +113,7 @@ const MINOR_CHORDS: ChordSpec[] = [
 ];
 
 /** Degrees that can be tonicised by a secondary dominant (Grade 4+), and their triad quality. */
-const SECONDARY_TARGETS: Record<Mode, { deg: number; q: Quality; triadToo: boolean }[]> = {
+const SECONDARY_TARGETS: Record<Mode, { deg: number; q: ChordQuality; triadToo: boolean }[]> = {
   major: [
     { deg: 1, q: 'm', triadToo: true },
     { deg: 3, q: 'M', triadToo: false }, // V/IV is just I: only V7/IV is distinct
@@ -189,8 +127,8 @@ const SECONDARY_TARGETS: Record<Mode, { deg: number; q: Quality; triadToo: boole
   ],
 };
 
-function makeChord(key: LKey, root: PC, rootDeg: number, q: Quality, fn: Fn, inversion: number, extra: Partial<HChord>): HChord {
-  const tones = SHAPES[q].map(([steps, semis]) => up(root, steps, semis));
+function makeChord(key: TonalKey, root: PC, rootDeg: number, q: ChordQuality, fn: HarmonicFunction, inversion: number, extra: Partial<HChord>): HChord {
+  const tones = CHORD_SHAPES[q].map(([steps, semis]) => pcAbove(root, steps, semis));
   const figure = tones.length === 4 ? SEVENTH_FIGURES[inversion] : TRIAD_FIGURES[inversion];
   const base = extra.base ?? numeral(rootDeg, q);
   const [head, ...rest] = base.split('/');
@@ -212,17 +150,17 @@ function makeChord(key: LKey, root: PC, rootDeg: number, q: Quality, fn: Fn, inv
 const chordCache = new Map<string, HChord[]>();
 
 /** Every chord (in every allowed inversion) available in a key at a grade. */
-function chordsFor(key: LKey, grade: Grade): HChord[] {
-  const cacheKey = `${keyLabel(key)}|${grade}`;
+function chordsFor(key: TonalKey, grade: Grade, secondaries = true): HChord[] {
+  const cacheKey = `${keyLabel(key)}|${grade}|${secondaries}`;
   const cached = chordCache.get(cacheKey);
   if (cached) return cached;
   const out: HChord[] = [];
   for (const spec of key.mode === 'major' ? MAJOR_CHORDS : MINOR_CHORDS) {
     if (spec.minGrade > grade) continue;
-    const root = degreePc(key, spec.deg, spec.raiseRoot);
+    const root = scaleDegreePc(key, spec.deg, spec.raiseRoot);
     for (const inversion of spec.inversions) {
       const dominantFn = spec.resolvesTo !== undefined;
-      const tones = SHAPES[spec.q].map(([steps, semis]) => up(root, steps, semis));
+      const tones = CHORD_SHAPES[spec.q].map(([steps, semis]) => pcAbove(root, steps, semis));
       out.push(
         makeChord(key, root, spec.deg, spec.q, spec.fn, inversion, {
           resolvesTo: spec.resolvesTo,
@@ -234,15 +172,15 @@ function chordsFor(key: LKey, grade: Grade): HChord[] {
       );
     }
   }
-  if (grade >= 4) {
+  if (grade >= 4 && secondaries) {
     for (const target of SECONDARY_TARGETS[key.mode]) {
-      const targetRoot = degreePc(key, target.deg);
-      const root = up(targetRoot, 4, 7);
+      const targetRoot = scaleDegreePc(key, target.deg);
+      const root = pcAbove(targetRoot, 4, 7);
       const name = `V/${numeral(target.deg, target.q)}`;
-      const qualities: Quality[] = target.triadToo ? ['M', 'D7'] : ['D7'];
+      const qualities: ChordQuality[] = target.triadToo ? ['M', 'D7'] : ['D7'];
       for (const q of qualities) {
         for (const inversion of q === 'M' ? [0, 1] : [0, 1, 2, 3]) {
-          const tones = SHAPES[q].map(([steps, semis]) => up(root, steps, semis));
+          const tones = CHORD_SHAPES[q].map(([steps, semis]) => pcAbove(root, steps, semis));
           out.push(
             makeChord(key, root, mod(target.deg + 4, 7), q, 'D', inversion, {
               base: name,
@@ -270,29 +208,29 @@ const roleOf = (c: HChord, pc: PC) => c.tones.findIndex((t) => samePc(t, pc));
 // ---------------------------------------------------------------------------
 
 interface PhrasePlan {
-  key: LKey;
+  key: TonalKey;
   cadence: Cadence;
   /** Index of an earlier phrase this one repeats exactly (bar form), if any. */
   repeats?: number;
 }
 
-function planPhrases(rng: Random, home: LKey, grade: Grade): PhrasePlan[] {
+function planPhrases(rng: Random, home: TonalKey, grade: Grade, modulate = true): PhrasePlan[] {
   const count = grade === 1 ? 2 : grade === 5 ? 6 : grade === 4 ? rng.pick([4, 6]) : 4;
   const major = home.mode === 'major';
-  const rel = (deg: number, mode: Mode): LKey => ({ tonic: degreePc(home, deg), mode });
+  const rel = (deg: number, mode: Mode): TonalKey => ({ tonic: scaleDegreePc(home, deg), mode });
   const first: PhrasePlan = { key: home, cadence: rng.weighted(['HC', 'IAC'] as Cadence[], (c) => (c === 'HC' ? 3 : 1.5)) };
   const last: PhrasePlan = { key: home, cadence: 'PAC' };
   if (count === 2) return [first, last];
 
   // Second phrase: modulate to the dominant (major) or relative major (minor) from Grade 3.
   const second: PhrasePlan =
-    grade >= 3
+    grade >= 3 && modulate
       ? { key: major ? rel(4, 'major') : rel(2, 'major'), cadence: 'PAC' }
       : { key: home, cadence: rng.weighted(['IAC', 'DC', 'HC'] as Cadence[], (c) => (c === 'IAC' ? 2 : 1)) };
 
   // A later phrase in another related key (Grade 4+), or a half or deceptive cadence at home.
   const away: PhrasePlan[] =
-    grade >= 4
+    grade >= 4 && modulate
       ? major
         ? [
             { key: rel(5, 'minor'), cadence: 'PAC' },
@@ -323,10 +261,48 @@ function planPhrases(rng: Random, home: LKey, grade: Grade): PhrasePlan[] {
 const PHRASE_BEATS = 8;
 const RANGE = { s: [60, 79], a: [55, 74], t: [48, 67], b: [40, 60] } as const;
 
+/**
+ * What a chorale may do, from the user's customisation (the defaults are a chorale's own):
+ * the voices' ranges, whether it may modulate or use secondary dominants (accidentals),
+ * figurate in quavers, add 4–3 suspensions (ties), and which melodic intervals the tune may use.
+ */
+interface ChoraleOptions {
+  ranges: Readonly<Record<'s' | 'a' | 't' | 'b', readonly [number, number]>>;
+  modulate: boolean;
+  secondaries: boolean;
+  quavers: boolean;
+  suspensions: boolean;
+  tuneInterval: (a: Pitch, b: Pitch) => boolean;
+}
+
+const CHORALE_DEFAULTS: ChoraleOptions = {
+  ranges: RANGE,
+  modulate: true,
+  secondaries: true,
+  quavers: true,
+  suspensions: true,
+  tuneInterval: () => true,
+};
+
+function choraleOptions(c: GenerationConstraints | null): ChoraleOptions {
+  if (!c) return CHORALE_DEFAULTS;
+  // The right hand's range bounds soprano and alto; the left hand's, tenor and bass.
+  const clip = (voice: readonly [number, number], range: PitchRange | null): [number, number] =>
+    range ? [Math.max(voice[0], midi(range.low)), Math.min(voice[1], midi(range.high))] : [voice[0], voice[1]];
+  return {
+    ranges: { s: clip(RANGE.s, c.melodyRange), a: clip(RANGE.a, c.melodyRange), t: clip(RANGE.t, c.bassRange), b: clip(RANGE.b, c.bassRange) },
+    modulate: c.accidentals,
+    secondaries: c.accidentals,
+    quavers: c.noteTicks.includes(2) && c.independence !== 'together',
+    suspensions: c.ties,
+    tuneInterval: (a, b) => melodicIntervalAllowed(c, a, b),
+  };
+}
+
 interface TuneNote {
   /** Diatonic index (letters from C0). */
   d: number;
-  key: LKey;
+  key: TonalKey;
 }
 
 /**
@@ -338,7 +314,7 @@ function spellTune(n: TuneNote, nextD: number | undefined, forceRaise = false): 
   const deg = degreeOfLetter(n.key, l);
   const ascending = nextD !== undefined && nextD === n.d + 1;
   const raise = forceRaise || (n.key.mode === 'minor' && (deg === 5 || deg === 6) && ascending);
-  const pc = degreePc(n.key, deg, raise);
+  const pc = scaleDegreePc(n.key, deg, raise);
   return { letter: LETTERS[pc.l], alter: pc.a, octave: Math.floor(n.d / 7) };
 }
 
@@ -368,19 +344,20 @@ const ENDINGS: Record<Cadence, { end: number; from: 1 | -1; weight: number }[]> 
 
 const TUNE_LEAPS = [0.25, 1, 0.5, 0.22, 0.08];
 
-function composeTune(rng: Random, plans: PhrasePlan[], home: LKey): TuneNote[] | null {
+function composeTune(rng: Random, plans: PhrasePlan[], home: TonalKey, opts: ChoraleOptions = CHORALE_DEFAULTS): TuneNote[] | null {
   const tune: TuneNote[] = [];
   const low = diatonicIndex({ letter: 'D', alter: 0, octave: 4 });
   const high = diatonicIndex({ letter: 'E', alter: 0, octave: 5 });
   const inRange = (n: TuneNote) => {
     const m = midi(spellTune(n, undefined));
-    return m >= RANGE.s[0] && m <= RANGE.s[1];
+    return m >= opts.ranges.s[0] && m <= opts.ranges.s[1];
   };
 
   /** The note sung before `n` in the phrase being composed (for the zig-zag rule). */
   let notesBefore: (n: TuneNote) => number | undefined = () => undefined;
   const ok = (p2: TuneNote | undefined, p1: TuneNote | undefined, c: TuneNote, cEnd = false): boolean => {
     if (!inRange(c)) return false;
+    if (p1 && !opts.tuneInterval(spellTune(p1, undefined), spellTune(c, undefined))) return false;
     if (!p1) return true;
     const step = c.d - p1.d;
     const size = Math.abs(step);
@@ -488,7 +465,7 @@ function composeTune(rng: Random, plans: PhrasePlan[], home: LKey): TuneNote[] |
 
 interface BeatInfo {
   s: Pitch;
-  key: LKey;
+  key: TonalKey;
   phrase: number;
   pos: number;
   cadence: Cadence;
@@ -516,9 +493,9 @@ function badLeap(p: Pitch, q: Pitch): boolean {
 
 const steps = (p: Pitch, q: Pitch) => diatonicIndex(q) - diatonicIndex(p);
 
-function candidatesFor(beat: BeatInfo, grade: Grade, first: boolean, picardy: boolean, finalBeat: boolean): HChord[] {
+function candidatesFor(beat: BeatInfo, grade: Grade, first: boolean, picardy: boolean, finalBeat: boolean, opts: ChoraleOptions): HChord[] {
   const s = pcOf(beat.s);
-  let chords = chordsFor(beat.key, grade).filter((c) => hasTone(c, s));
+  let chords = chordsFor(beat.key, grade, opts.secondaries).filter((c) => hasTone(c, s));
   const root = (c: HChord, deg: number) => c.rootDeg === deg && !c.secondary;
   const triadRoot = (c: HChord, deg: number) => root(c, deg) && isTriad(c) && c.inversion === 0;
   if (first) chords = chords.filter((c) => triadRoot(c, 0));
@@ -542,7 +519,7 @@ function candidatesFor(beat: BeatInfo, grade: Grade, first: boolean, picardy: bo
     }
     if (finalBeat && picardy && beat.key.mode === 'minor') {
       // Tierce de Picardie: the minor chorale ends on a major chord.
-      const tonic = degreePc(beat.key, 0);
+      const tonic = scaleDegreePc(beat.key, 0);
       chords = [makeChord(beat.key, tonic, 0, 'M', 'T', 0, { base: 'I', prior: 0 })];
       chords[0].label = 'I';
     }
@@ -588,17 +565,17 @@ function bassCost(p: Pitch, q: Pitch): number {
   return [0.8, 0, 0.35, 0.45, 0.5, 1.4, FORBID, 0.6][Math.min(st, 7)];
 }
 
-function harmonise(rng: Random, beats: BeatInfo[], grade: Grade, picardy: boolean, noise: number): HState[] | null {
+function harmonise(rng: Random, beats: BeatInfo[], grade: Grade, picardy: boolean, noise: number, opts: ChoraleOptions = CHORALE_DEFAULTS): HState[] | null {
   const layers: { state: HState; cost: number; back: number }[][] = [];
   beats.forEach((beat, g) => {
     const sm = midi(beat.s);
     const finalBeat = g === beats.length - 1;
     const states: HState[] = [];
-    for (const chord of candidatesFor(beat, grade, g === 0, picardy, finalBeat)) {
-      for (const bass of pitchesOf(bassPc(chord), RANGE.b[0], RANGE.b[1])) {
+    for (const chord of candidatesFor(beat, grade, g === 0, picardy, finalBeat, opts)) {
+      for (const bass of pitchesOf(bassPc(chord), opts.ranges.b[0], opts.ranges.b[1])) {
         if (sm - midi(bass) < 12) continue;
         // Only keep outer voices that leave room for a correct alto and tenor.
-        if (!canVoice(chord, beat.s, bass, finalBeat)) continue;
+        if (!canVoice(chord, beat.s, bass, finalBeat, opts)) continue;
         states.push({ chord, bass });
       }
     }
@@ -709,20 +686,20 @@ function voiceCost(chord: HChord, v: Voicing, finalChord: boolean): number {
 }
 
 /** True if some alto and tenor complete the chord correctly between this soprano and bass. */
-function canVoice(chord: HChord, s: Pitch, b: Pitch, finalChord: boolean): boolean {
-  const altos = chord.tones.flatMap((pc) => pitchesOf(pc, RANGE.a[0], RANGE.a[1]));
-  const tenors = chord.tones.flatMap((pc) => pitchesOf(pc, RANGE.t[0], RANGE.t[1]));
+function canVoice(chord: HChord, s: Pitch, b: Pitch, finalChord: boolean, opts: ChoraleOptions): boolean {
+  const altos = chord.tones.flatMap((pc) => pitchesOf(pc, opts.ranges.a[0], opts.ranges.a[1]));
+  const tenors = chord.tones.flatMap((pc) => pitchesOf(pc, opts.ranges.t[0], opts.ranges.t[1]));
   return altos.some((a) => tenors.some((t) => voiceCost(chord, { s, a, t, b }, finalChord) < FORBID));
 }
 
-function voice(rng: Random, beats: BeatInfo[], harmony: HState[]): { voicings: Voicing[]; cost: number } {
+function voice(rng: Random, beats: BeatInfo[], harmony: HState[], opts: ChoraleOptions = CHORALE_DEFAULTS): { voicings: Voicing[]; cost: number } {
   const layers: { v: Voicing; cost: number; back: number }[][] = [];
   harmony.forEach((h, g) => {
     const chord = h.chord;
     const s = beats[g].s;
     const finalChord = g === harmony.length - 1;
-    const altos = chord.tones.flatMap((pc) => pitchesOf(pc, RANGE.a[0], RANGE.a[1]));
-    const tenors = chord.tones.flatMap((pc) => pitchesOf(pc, RANGE.t[0], RANGE.t[1]));
+    const altos = chord.tones.flatMap((pc) => pitchesOf(pc, opts.ranges.a[0], opts.ranges.a[1]));
+    const tenors = chord.tones.flatMap((pc) => pitchesOf(pc, opts.ranges.t[0], opts.ranges.t[1]));
     const layer: { v: Voicing; cost: number; back: number }[] = [];
     for (const a of altos) {
       for (const t of tenors) {
@@ -766,6 +743,11 @@ function voice(rng: Random, beats: BeatInfo[], harmony: HState[]): { voicings: V
 
 const VOICES = ['s', 'a', 't', 'b'] as const;
 type VoiceName = (typeof VOICES)[number];
+
+/** A value for each voice, built soprano to bass. */
+function byVoice<T>(make: (name: VoiceName) => T): Record<VoiceName, T> {
+  return { s: make('s'), a: make('a'), t: make('t'), b: make('b') };
+}
 
 /** V4/3 – I6: the seventh may rise a step, moving in tenths with the bass. */
 function risingSeventhOk(a: HChord, b: HChord, st: number): boolean {
@@ -822,20 +804,26 @@ interface Event {
 }
 
 /** Spells the note a step between two pitches (or beside one), in the key, matching nearby chords. */
-function stepBetween(d: number, key: LKey, chords: HChord[], ascendingToRaised: boolean): Pitch {
+function stepBetween(d: number, key: TonalKey, chords: HChord[], ascendingToRaised: boolean): Pitch {
   const l = mod(d, 7);
   for (const c of chords) {
     const t = c.tones.find((x) => x.l === l);
     if (t) return { letter: LETTERS[t.l], alter: t.a, octave: Math.floor(d / 7) };
   }
-  const pc = degreePc(key, degreeOfLetter(key, l), ascendingToRaised);
+  const pc = scaleDegreePc(key, degreeOfLetter(key, l), ascendingToRaised);
   return { letter: LETTERS[pc.l], alter: pc.a, octave: Math.floor(d / 7) };
 }
 
-function figurate(rng: Random, beats: BeatInfo[], harmony: HState[], voicings: Voicing[], grade: Grade): Record<VoiceName, Event[][]> {
-  const events = {} as Record<VoiceName, Event[][]>;
-  for (const name of VOICES) events[name] = voicings.map((v) => [{ p: v[name], ticks: 4 }]);
-  if (grade < 3) return events;
+function figurate(
+  rng: Random,
+  beats: BeatInfo[],
+  harmony: HState[],
+  voicings: Voicing[],
+  grade: Grade,
+  opts: ChoraleOptions = CHORALE_DEFAULTS,
+): Record<VoiceName, Event[][]> {
+  const events = byVoice((name) => voicings.map((v): Event[] => [{ p: v[name], ticks: 4 }]));
+  if (grade < 3 || !opts.quavers) return events;
   const chance: Record<VoiceName, number> =
     grade === 3 ? { s: 0, a: 0.1, t: 0.15, b: 0.35 } : grade === 4 ? { s: 0, a: 0.35, t: 0.4, b: 0.45 } : { s: 0.08, a: 0.4, t: 0.45, b: 0.5 };
 
@@ -865,7 +853,7 @@ function figurate(rng: Random, beats: BeatInfo[], harmony: HState[], voicings: V
   };
 
   // 4–3 suspensions over the dominant at cadences (Grade 4+).
-  if (grade >= 4) {
+  if (grade >= 4 && opts.suspensions) {
     beats.forEach((beat, g) => {
       if (beat.pos !== PHRASE_BEATS - 2 || !['PAC', 'IAC', 'DC'].includes(beat.cadence)) return;
       if (!harmony[g].chord.dominant || !rng.chance(grade === 5 ? 0.7 : 0.5)) return;
@@ -903,7 +891,7 @@ function figurate(rng: Random, beats: BeatInfo[], harmony: HState[], voicings: V
       }
       if (!q) continue;
       const m = midi(q);
-      const [lo, hi] = RANGE[name];
+      const [lo, hi] = opts.ranges[name];
       if (m < lo || m > hi) continue;
       const s1 = Math.abs(m - midi(c));
       const s2 = Math.abs(midi(n) - m);
@@ -921,12 +909,15 @@ function figurate(rng: Random, beats: BeatInfo[], harmony: HState[], voicings: V
 
 export function generateChorale(settings: Settings): Piece {
   const { seed, grade } = settings;
-  const spec = GRADE_SPECS[grade];
+  const cons = constraintsOf(settings);
+  const spec = effectiveSpec(grade, cons);
+  const opts = choraleOptions(cons);
   const rng = new Random(`${seed}|g${grade}|chorale|${settings.keyId ?? ''}`);
   const keys = KEYS.filter((k) => spec.keys.includes(k.id));
   const key: Key = KEYS.find((k) => k.id === settings.keyId) ?? rng.weighted(keys, (k) => (k.mode === 'major' ? 2 : 1.5));
-  const home: LKey = { tonic: { l: LETTERS.indexOf(key.tonic), a: key.tonicAlter }, mode: key.mode };
-  const picardy = key.mode === 'minor' && rng.chance(0.65);
+  const home: TonalKey = { tonic: { l: LETTERS.indexOf(key.tonic), a: key.tonicAlter }, mode: key.mode };
+  // (A major tonic chord ending a minor-key chorale needs an accidental.)
+  const picardy = key.mode === 'minor' && rng.chance(0.65) && opts.modulate;
 
   let best: {
     plans: PhrasePlan[];
@@ -936,8 +927,8 @@ export function generateChorale(settings: Settings): Piece {
     cost: number;
   } | null = null;
   for (let attempt = 0; attempt < 12 && !(best && best.cost < FORBID / 2); attempt++) {
-    const plans = planPhrases(rng, home, grade);
-    const tune = composeTune(rng, plans, home);
+    const plans = planPhrases(rng, home, grade, opts.modulate);
+    const tune = composeTune(rng, plans, home, opts);
     if (!tune) continue;
     const beats: BeatInfo[] = tune.map((n, g) => {
       const phrase = Math.floor(g / PHRASE_BEATS);
@@ -953,9 +944,9 @@ export function generateChorale(settings: Settings): Piece {
     let harmonyUnique: HState[] | null = null;
     let voiced: { voicings: Voicing[]; cost: number } = { voicings: [], cost: Infinity };
     for (let tryHarmony = 0; tryHarmony < 4; tryHarmony++) {
-      const h = harmonise(rng, uniqueBeats, grade, picardy, 0.6 + tryHarmony * 0.5);
+      const h = harmonise(rng, uniqueBeats, grade, picardy, 0.6 + tryHarmony * 0.5, opts);
       if (!h) break;
-      const v = voice(rng, uniqueBeats, h);
+      const v = voice(rng, uniqueBeats, h, opts);
       if (v.voicings.length && v.cost < voiced.cost) {
         harmonyUnique = h;
         voiced = v;
@@ -970,9 +961,8 @@ export function generateChorale(settings: Settings): Piece {
       });
     if (best && voiced.cost >= best.cost) continue;
     // Figurate each distinct phrase once, so a repeated phrase is repeated note for note.
-    const figured = figurate(rng, uniqueBeats, harmonyUnique, voiced.voicings, grade);
-    const events = {} as Record<VoiceName, Event[][]>;
-    for (const name of VOICES) events[name] = expand(figured[name]);
+    const figured = figurate(rng, uniqueBeats, harmonyUnique, voiced.voicings, grade, opts);
+    const events = byVoice((name) => expand(figured[name]));
     best = { plans, beats, harmony: expand(harmonyUnique), events, cost: voiced.cost };
   }
   if (!best) throw new Error('Chorale generation failed');

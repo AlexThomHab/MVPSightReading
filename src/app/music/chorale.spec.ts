@@ -1,4 +1,5 @@
-import { generatePiece, Note, Piece } from './generator';
+import { generatePiece } from './generator';
+import { Note, Piece } from './model';
 import { GRADES } from './grades';
 import { LETTERS, Pitch, accidentalSymbol, diatonicIndex, isSingableInterval, midi, mod, pitchName } from './theory';
 

@@ -1,6 +1,7 @@
-import { generatePiece, Piece } from '../music/generator';
+import { generatePiece } from '../music/generator';
+import { Piece } from '../music/model';
 import { midi } from '../music/theory';
-import { barLengths, buildSchedule } from './schedule';
+import { barLengths, buildSchedule, ornamented } from './schedule';
 
 const close = (a: number, b: number) => Math.abs(a - b) < 1e-9;
 
@@ -91,5 +92,36 @@ describe('buildSchedule', () => {
       one.notes.forEach((n, i) => expect(close(n.time + offset, sameBar[i].time)).toBe(true));
       expect(lengths[bar]).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('ornaments in playback', () => {
+  const base = { time: 1, duration: 1, midis: [72], velocity: 0.5, bar: 0 };
+  const c5 = { letter: 'C' as const, alter: 0, octave: 5 };
+  const d5 = { letter: 'D' as const, alter: 0, octave: 5 };
+  const b4 = { letter: 'B' as const, alter: 0, octave: 4 };
+
+  it('crushes a grace note in on the beat, before the note', () => {
+    const out = ornamented(base, { pitches: [c5], ticks: 4, grace: [b4] }, 0.5);
+    expect(out.map((e) => e.midis[0])).toEqual([71, 72]);
+    expect(out[0].time).toBe(1);
+    expect(out[0].duration).toBeLessThanOrEqual(0.07);
+    expect(out[1].time + out[1].duration).toBeCloseTo(2);
+  });
+
+  it('plays a turn as upper, main, lower, main, then holds the note', () => {
+    const out = ornamented(base, { pitches: [c5], ticks: 8, ornament: { type: 'turn', upper: d5, lower: b4 } }, 0.5);
+    expect(out.map((e) => e.midis[0])).toEqual([74, 72, 71, 72]);
+    expect(out[3].duration).toBeGreaterThan(out[0].duration);
+  });
+
+  it('trills with the note above and ends on the note, filling its length', () => {
+    const out = ornamented(base, { pitches: [c5], ticks: 8, ornament: { type: 'trill', upper: d5 } }, 0.5);
+    expect(out.length).toBeGreaterThan(4);
+    expect(out[0].midis[0]).toBe(72);
+    expect(out[1].midis[0]).toBe(74);
+    expect(out[out.length - 1].midis[0]).toBe(72);
+    const end = out[out.length - 1].time + out[out.length - 1].duration;
+    expect(end).toBeCloseTo(2);
   });
 });

@@ -92,6 +92,11 @@ export function diatonicIndex(p: Pitch): number {
   return p.octave * 7 + LETTERS.indexOf(p.letter);
 }
 
+/** The natural note at a diatonic position (the inverse of `diatonicIndex`). */
+export function naturalAt(index: number): Pitch {
+  return { letter: LETTERS[mod(index, 7)], alter: 0, octave: Math.floor(index / 7) };
+}
+
 export function midi(p: Pitch): number {
   return 12 * (p.octave + 1) + NATURAL_SEMITONES[LETTERS.indexOf(p.letter)] + p.alter;
 }

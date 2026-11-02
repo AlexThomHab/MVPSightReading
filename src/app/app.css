@@ -102,6 +102,7 @@ input:focus-visible {
 
 .actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -132,6 +133,29 @@ button.primary:hover {
   border-radius: 8px;
   background: var(--notice);
   font-size: 0.9rem;
+}
+
+.notice.error {
+  background: #fbe1dc;
+  color: #7a1d0c;
+}
+
+.customise-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.customise-toggle[aria-expanded='true'] {
+  border-color: var(--ink);
+  background: var(--panel);
+}
+
+.customise-toggle .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 
 .sheet {

@@ -66,6 +66,18 @@
       }
     </button>
     <button type="button" (click)="print()">Print</button>
+    <button
+      type="button"
+      class="customise-toggle"
+      (click)="toggleCustomise()"
+      [attr.aria-expanded]="customiseOpen()"
+      aria-controls="customise-panel"
+    >
+      Customise
+      @if (isCustomised()) {
+        <span class="dot" aria-label="(customised)"></span>
+      }
+    </button>
     <button type="button" (click)="toggleEarTraining()" [attr.aria-pressed]="ear.active()">
       {{ ear.active() ? 'Exit ear training' : 'Ear training' }}
     </button>
@@ -82,6 +94,31 @@
     />
   </label>
 </section>
+
+@if (customiseOpen()) {
+  <app-customise-panel
+    id="customise-panel"
+    [grade]="grade()"
+    [style]="style()"
+    [keyId]="settings().keyId"
+    [timeId]="settings().timeId"
+    [value]="customDraft()"
+    [pending]="pendingCustom()"
+    (valueChange)="customDraft.set($event)"
+    (apply)="newPiece()"
+    (closed)="toggleCustomise()"
+  />
+}
+
+@if (generationError()) {
+  <p class="notice error" role="alert">{{ generationError() }} The previous piece is still shown.</p>
+}
+@if (!customiseOpen()) {
+  <!-- (The open panel shows these itself, beside the settings they concern.) -->
+  @for (n of piece().notices ?? []; track n) {
+    <p class="notice">{{ n }}</p>
+  }
+}
 
 @if (ear.active()) {
   <app-ear-toolbar (togglePlay)="togglePlay()" />

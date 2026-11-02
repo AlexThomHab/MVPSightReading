@@ -162,3 +162,12 @@ export const GRADE_SPECS: Readonly<Record<Grade, GradeSpec>> = {
     chromatic: true,
   },
 };
+
+export function isGrade(value: number): value is Grade {
+  return (GRADES as readonly number[]).includes(value);
+}
+
+export function isTimeSignatureId(value: string | null): value is TimeSignatureId {
+  // (An own key: `'toString' in TIME_SIGNATURES` is true too.)
+  return value !== null && Object.prototype.hasOwnProperty.call(TIME_SIGNATURES, value);
+}
