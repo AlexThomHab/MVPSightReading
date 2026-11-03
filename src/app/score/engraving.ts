@@ -1,8 +1,8 @@
 /**
  * Engraving: lays out a piece as a two-stave piano score (or a four-voice chorale) with
  * VexFlow — systems of four bars, clefs, key and time signatures, beams, ties, ornaments,
- * dynamics, hairpins and slurs — and reports where each bar is drawn, for highlighting and
- * selection. Bars hidden by Ear Training keep their place but show no notes.
+ * dynamics, hairpins and slurs — and reports where each bar is drawn, for the playback
+ * highlight.
  */
 import type * as VF from 'vexflow/bravura';
 import { Bar, Note, NoteRef, Piece } from '../music/model';
@@ -17,16 +17,6 @@ const BARS_PER_LINE = 4;
 const TOP = 56;
 const STAVE_GAP = 110;
 const SYSTEM_HEIGHT = 250;
-
-/** How much of the score to show (ear training conceals it). */
-export interface ScoreView {
-  /** Hide every bar's notes except `revealed` and number the bars; the layout is unchanged. */
-  concealed: boolean;
-  revealed: ReadonlySet<number>;
-  showKey: boolean;
-  showTime: boolean;
-  showTempo: boolean;
-}
 
 /** Bar position as fractions of the drawing, for the playback highlight. */
 export interface BarBox {
@@ -90,7 +80,7 @@ function lineBreaks(count: number): number[][] {
   return out;
 }
 
-export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTMLDivElement): BarBox[] {
+export function drawPiece(vf: typeof VF, piece: Piece, el: HTMLDivElement): BarBox[] {
   const { Renderer, Stave, StaveConnector, Formatter, BarlineType } = vf;
   const layout = lineBreaks(piece.bars.length);
   const lines = layout.length;
@@ -108,13 +98,8 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
     svg.style.removeProperty('height');
   }
 
-  // The layout is always the sight-reading layout: key and time signatures keep their
-  // space even when hidden, and bar widths come from the notes, so every bar stays where
-  // it would be in the normal view whether concealed or revealed.
   const keySpec = piece.key.id;
   const timeSpec = `${piece.time.num}/${piece.time.den}`;
-  // With the key signature hidden, revealed notes show every accidental explicitly.
-  const revealedAccidentals = view.showKey ? keySpec : 'C';
   const boxes: BarBox[] = [];
   const expression = piece.expression;
   // Dynamics by bar, then by right-hand note index.
@@ -164,7 +149,6 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
       const width = widths[i] + (first ? modifierWidth : 0);
       const treble = new Stave(x, y, width);
       const bass = new Stave(x, y + STAVE_GAP, width);
-      if (view.concealed) treble.setMeasure(barIndex + 1);
       if (first) {
         treble.addClef('treble').addKeySignature(keySpec);
         bass.addClef('bass').addKeySignature(keySpec);
@@ -172,7 +156,7 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
           treble.addTimeSignature(timeSpec);
           bass.addTimeSignature(timeSpec);
         }
-        if (line === 0 && view.showTempo) {
+        if (line === 0) {
           const t = piece.tempo;
           treble.setTempo(
             {
@@ -199,23 +183,20 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
       }
       new StaveConnector(treble, bass).setType(isFinal ? 'boldDoubleRight' : 'singleRight').setContext(ctx).draw();
 
-      // A concealed bar keeps its staves and barlines but none of its notes.
-      if (!view.concealed || view.revealed.has(barIndex)) {
-        const dynamics = expression ? dynamicsByBar.get(barIndex) : barIndex === 0 && piece.dynamic ? new Map([[0, piece.dynamic]]) : undefined;
-        const built = buildBar(vf, piece, bar, view.concealed ? revealedAccidentals : keySpec, dynamics);
-        lineMelody.set(barIndex, built.melody);
-        built.treble.forEach((v) => v.setStave(treble));
-        built.bass.forEach((v) => v.setStave(bass));
-        const justify = treble.getNoteEndX() - treble.getNoteStartX() - 14;
-        new Formatter()
-          .joinVoices(built.treble)
-          .joinVoices(built.bass)
-          .format([...built.treble, ...built.bass], justify);
-        built.treble.forEach((v) => v.draw(ctx, treble));
-        built.bass.forEach((v) => v.draw(ctx, bass));
-        built.beams.forEach((b) => b.setContext(ctx).draw());
-        built.ties.forEach((t) => t.setContext(ctx).draw());
-      }
+      const dynamics = expression ? dynamicsByBar.get(barIndex) : barIndex === 0 && piece.dynamic ? new Map([[0, piece.dynamic]]) : undefined;
+      const built = buildBar(vf, piece, bar, keySpec, dynamics);
+      lineMelody.set(barIndex, built.melody);
+      built.treble.forEach((v) => v.setStave(treble));
+      built.bass.forEach((v) => v.setStave(bass));
+      const justify = treble.getNoteEndX() - treble.getNoteStartX() - 14;
+      new Formatter()
+        .joinVoices(built.treble)
+        .joinVoices(built.bass)
+        .format([...built.treble, ...built.bass], justify);
+      built.treble.forEach((v) => v.draw(ctx, treble));
+      built.bass.forEach((v) => v.draw(ctx, bass));
+      built.beams.forEach((b) => b.setContext(ctx).draw());
+      built.ties.forEach((t) => t.setContext(ctx).draw());
 
       const top = y + 10;
       const bottom = y + STAVE_GAP + 90;
@@ -228,12 +209,9 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
       };
       x += width;
     });
-    drawCrossBarTies(vf, ctx, piece, layout[line], lineMelody, (b) => !view.concealed || view.revealed.has(b));
+    drawCrossBarTies(vf, ctx, piece, layout[line], lineMelody);
     if (expression) drawLineMarks(vf, ctx, expression, layout[line], lineMelody, dynamicsByBar);
   }
-  // Hidden hints keep their space (so nothing moves) but are not drawn.
-  if (svg && !view.showKey) svg.querySelectorAll('.vf-keysignature').forEach((g) => g.setAttribute('visibility', 'hidden'));
-  if (svg && !view.showTime) svg.querySelectorAll('.vf-timesignature').forEach((g) => g.setAttribute('visibility', 'hidden'));
   return boxes;
 }
 
@@ -247,7 +225,6 @@ function drawCrossBarTies(
   piece: Piece,
   barsInLine: number[],
   melody: Map<number, VF.StaveNote[]>,
-  visible: (bar: number) => boolean,
 ): void {
   if (piece.bars[0].voices) return;
   const { StaveTie } = vf;
@@ -257,14 +234,14 @@ function drawCrossBarTies(
   const last = barsInLine[barsInLine.length - 1];
   for (const b of barsInLine) {
     const notes = piece.bars[b].rh;
-    if (!notes[notes.length - 1]?.tie || b + 1 >= piece.bars.length || !visible(b) || !visible(b + 1)) continue;
+    if (!notes[notes.length - 1]?.tie || b + 1 >= piece.bars.length) continue;
     const from = melody.get(b)?.[notes.length - 1] ?? null;
     if (b < last) tie(from, melody.get(b + 1)?.[0] ?? null);
     else if (from) tie(from, null);
   }
   // A tie arriving from the end of the previous line.
   const before = piece.bars[first - 1]?.rh;
-  if (before && before[before.length - 1].tie && visible(first - 1) && visible(first)) {
+  if (before && before[before.length - 1].tie) {
     const to = melody.get(first)?.[0];
     if (to) tie(null, to);
   }
@@ -279,7 +256,7 @@ function accidentalFor(p: Pitch, key: Key | null): string | null {
 
 /**
  * Hairpins and slurs for one line. A mark that runs on from (or to) another line is drawn up
- * to the line's edge; a mark that touches a concealed bar is not drawn at all.
+ * to the line's edge.
  */
 function drawLineMarks(
   vf: typeof VF,
@@ -293,7 +270,7 @@ function drawLineMarks(
   const first = barsInLine[0];
   const last = barsInLine[barsInLine.length - 1];
   const before = (a: NoteRef, b: NoteRef) => a.bar < b.bar || (a.bar === b.bar && a.index < b.index);
-  /** The part of a span that lies on this line, or null if it is elsewhere or concealed. */
+  /** The part of a span that lies on this line, or null if it is elsewhere. */
   const clip = (from: NoteRef, to: NoteRef): [VF.StaveNote, VF.StaveNote, NoteRef, NoteRef] | null => {
     if (to.bar < first || from.bar > last) return null;
     const start = from.bar < first ? { bar: first, index: 0 } : from;

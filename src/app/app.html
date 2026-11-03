@@ -78,9 +78,6 @@
         <span class="dot" aria-label="(customised)"></span>
       }
     </button>
-    <button type="button" (click)="toggleEarTraining()" [attr.aria-pressed]="ear.active()">
-      {{ ear.active() ? 'Exit ear training' : 'Ear training' }}
-    </button>
   </div>
 
   <label class="field tempo">
@@ -120,40 +117,21 @@
   }
 }
 
-@if (ear.active()) {
-  <app-ear-toolbar (togglePlay)="togglePlay()" />
-  @if (pendingSettings()) {
-    <p class="notice">Your new settings will be used when you click New piece.</p>
-  }
-}
-
 @if (playback.usingSynth()) {
   <p class="notice">Piano samples could not be loaded, so playback is using a simple synthesiser.</p>
 }
 
 <main class="sheet">
   <header class="sheet-header">
-    <h2>{{ sheetTitle() }}</h2>
+    <h2>{{ piece().title }}</h2>
     <p class="sheet-meta">
       <span>{{ subtitle() }}</span>
       <span class="seed">Seed {{ piece().seed }}</span>
     </p>
   </header>
-  <app-score
-    [piece]="piece()"
-    [activeBar]="playback.currentBar()"
-    [concealed]="ear.active()"
-    [revealed]="ear.revealed()"
-    [showKey]="!ear.active() || ear.showKey()"
-    [showTime]="!ear.active() || ear.showTime()"
-    [showTempo]="!ear.active()"
-    [selection]="ear.active() ? ear.selection() : null"
-    (barClick)="ear.clickBar($event)"
-    (barDrag)="ear.dragBars($event.anchor, $event.bar)"
-  />
+  <app-score [piece]="piece()" [activeBar]="playback.currentBar()" />
 </main>
 
-@if (!ear.active()) {
 <section class="analysis" aria-label="Phrase analysis">
   <h3>Analysis</h3>
   <ol>
@@ -166,4 +144,3 @@
     }
   </ol>
 </section>
-}
