@@ -159,32 +159,6 @@ function specialChord(k: TonalKey, symbol: string): Omit<RChord, 'chromatic'> | 
   }
 }
 
-/** The symbol for the same function in minor (used to adapt major-key templates). */
-export function toMinor(symbol: string): string {
-  const map: Record<string, string> = {
-    I: 'i',
-    I64: 'i64',
-    ii: 'ii°6',
-    ii6: 'ii°6',
-    ii65: 'iiø65',
-    iii: 'III',
-    IV: 'iv',
-    iv: 'iv',
-    vi: 'VI',
-    bVI: 'VI',
-    'V7/ii': 'V7/iv',
-    'V65/ii': 'V65/iv',
-    'vii°7/ii': 'vii°7/iv',
-    'V7/vi': 'V7/VI',
-    'V65/vi': 'V65/VI',
-    'vii°7/vi': 'vii°7/VI',
-    'V7/IV': 'V7/iv',
-    'V65/IV': 'V65/iv',
-    iiø65: 'iiø65',
-  };
-  return map[symbol] ?? symbol;
-}
-
 /**
  * True when chord `a` may move to chord `b`: a chord that leads somewhere (a dominant, an
  * applied chord, a Neapolitan or augmented sixth, a cadential six-four) must go there.

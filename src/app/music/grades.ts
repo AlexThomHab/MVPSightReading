@@ -13,7 +13,7 @@ import { ExtraChord } from './theory';
 export type Grade = 1 | 2 | 3 | 4 | 5;
 export const GRADES: readonly Grade[] = [1, 2, 3, 4, 5];
 
-export const TICKS = {
+const TICKS = {
   semibreve: 16,
   dottedMinim: 12,
   minim: 8,

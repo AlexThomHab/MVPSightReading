@@ -71,11 +71,6 @@ export function keyName(k: Key): string {
   return `${k.tonic}${accidentalSymbol(k.tonicAlter)} ${k.mode}`;
 }
 
-/** The key spec VexFlow expects for key signatures and accidentals: "G", "F#m", "Bb". */
-export function vexKeySpec(k: Key): string {
-  return k.id;
-}
-
 /** The alteration the key signature gives a letter. */
 export function keySignatureAlter(k: Key, letter: Letter): number {
   if (k.fifths > 0) return SHARP_ORDER.slice(0, k.fifths).includes(letter) ? 1 : 0;
@@ -99,10 +94,6 @@ export function naturalAt(index: number): Pitch {
 
 export function midi(p: Pitch): number {
   return 12 * (p.octave + 1) + NATURAL_SEMITONES[LETTERS.indexOf(p.letter)] + p.alter;
-}
-
-export function samePitchClass(a: Pitch, b: Pitch): boolean {
-  return a.letter === b.letter && a.alter === b.alter;
 }
 
 /** "F♯4" — for display and debugging. */

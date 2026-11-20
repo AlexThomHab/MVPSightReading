@@ -5,6 +5,7 @@ import { generatePiece } from './generator';
 import { Note, Piece } from './model';
 import { GRADES, GRADE_SPECS } from './grades';
 import { diatonicIndex, keyById, keyName, midi, pitchName } from './theory';
+import { onsets } from './durations';
 
 const SEEDS = 10;
 
@@ -373,7 +374,6 @@ describe('Chopin style', () => {
     }
     expect(exact / returns.length).toBeGreaterThan(0.85);
     const sentences = pieces.filter((p) => p.bars.length === 8 && p.phrases.length === 1);
-    const onsets = (ns: Note[]) => ns.reduce<number[]>((acc, _, i) => [...acc, i ? acc[i - 1] + ns[i - 1].ticks : 0], []);
     const sequenced = sentences.filter((p) => {
       const a = onsets(p.bars[0].rh);
       const b = onsets(p.bars[2].rh);

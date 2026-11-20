@@ -8,7 +8,7 @@ import { GRADES, GRADE_SPECS, Grade } from './grades';
 import { STYLE_IDS, StyleId } from './styles';
 
 /** JSON with object keys sorted, so field order never affects the digest. */
-export function canonicalJson(value: unknown): string {
+function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
   if (value && typeof value === 'object') {
     const entries = Object.entries(value as Record<string, unknown>)
@@ -20,7 +20,7 @@ export function canonicalJson(value: unknown): string {
 }
 
 /** FNV-1a, 32-bit, as 8 hex digits. */
-export function fnv1a(text: string): string {
+function fnv1a(text: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) {
     h ^= text.charCodeAt(i);

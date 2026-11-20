@@ -9,6 +9,7 @@
  * pitch, length and position. An extra note adds a point that cannot be earned, so entering
  * one right note in a busy bar, or every note on the keyboard, cannot score 100%.
  */
+import { lengthName } from '../music/durations';
 import { Note, Piece } from '../music/model';
 import { TimeSignature } from '../music/grades';
 import { Pitch, midi, pitchName } from '../music/theory';
@@ -69,21 +70,6 @@ export interface CheckResult {
 const EPS = 1e-6;
 const same = (a: number, b: number) => Math.abs(a - b) < EPS;
 
-const NAMES: Record<number, string> = {
-  24: 'dotted semibreve',
-  16: 'semibreve',
-  12: 'dotted minim',
-  8: 'minim',
-  6: 'dotted crotchet',
-  4: 'crotchet',
-  3: 'dotted quaver',
-  2: 'quaver',
-  1.5: 'dotted semiquaver',
-  1: 'semiquaver',
-  0.75: 'dotted demisemiquaver',
-  0.5: 'demisemiquaver',
-};
-export const lengthName = (ticks: number) => NAMES[ticks] ?? `${ticks / 4} beats`;
 
 /** "beat 2", "beat 2½" — where a tick falls in the bar, counted in the time signature's beats. */
 export function beatName(tick: number, time: TimeSignature): string {

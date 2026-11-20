@@ -4,6 +4,7 @@ import type { MissingOnScore } from '../score/score.component';
 import { EarTrainingState } from './ear-training.state';
 import { NoteInputState } from './note-input.state';
 import { CheckResult, checkAnswers, staffKey } from './scoring';
+import type { Staff } from '../music/model';
 
 export const RIGHT = '#1e8e3e';
 export const WRONG = '#d93025';
@@ -57,7 +58,7 @@ export class AnswerCheckState {
     const attempted = this.input.attempted();
     const out = new Set<string>();
     for (const [key, notes] of this.snapshot()) {
-      const [bar, staff] = key.split(':') as [string, 'rh' | 'lh'];
+      const [bar, staff] = key.split(':') as [string, Staff];
       if (!attempted.has(key) || JSON.stringify(t.bars[Number(bar)]?.[staff]) !== notes) out.add(key);
     }
     return out;

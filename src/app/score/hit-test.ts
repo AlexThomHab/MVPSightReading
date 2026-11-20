@@ -11,9 +11,10 @@
  * is what is written.
  */
 import { BarGeometry, STAFF_SPACE } from './engraving';
+import { isPlain } from '../music/durations';
+import type { Staff } from '../music/model';
 import { diatonicIndex } from '../music/theory';
 
-export type Staff = 'rh' | 'lh';
 
 /** What note input would write at a point. */
 export interface InputTarget {
@@ -114,8 +115,7 @@ export function xAtTick(g: BarGeometry, tick: number): number {
  * time on its own, so a dotted crotchet fills a beat).
  */
 export function snapGrid(ticks: number, compound: boolean): number {
-  const plain = [16, 8, 4, 2, 1, 0.5].includes(ticks);
-  return plain || compound ? ticks : ticks / 1.5;
+  return isPlain(ticks) || compound ? ticks : ticks / 1.5;
 }
 
 /**

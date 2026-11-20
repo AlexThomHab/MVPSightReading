@@ -8,6 +8,9 @@ import type { Customisation } from './constraints';
 import { StyleId } from './styles';
 import { Key, Mode, Pitch } from './theory';
 
+/** The two staves of piano music: the right hand (treble) and the left hand (bass). */
+export type Staff = 'rh' | 'lh';
+
 export interface Note {
   /** Empty for a rest. Chords (left hand) are sorted low to high. */
   pitches: Pitch[];

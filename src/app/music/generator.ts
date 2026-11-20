@@ -8,7 +8,7 @@
  */
 import { generateChopin } from './chopin';
 import { generateChorale } from './chorale';
-import { isDefault } from './constraints';
+import { GenerationError, isDefault } from './constraints';
 import { generateCustomised } from './customise';
 import type { Piece, Settings } from './model';
 import { generatePianoPiece } from './piano';
@@ -34,4 +34,17 @@ const GENERATORS: Readonly<Record<StyleId, StyleGenerator>> = {
 export function generatePiece(settings: Settings): Piece {
   const generate = GENERATORS[settings.style];
   return isDefault(settings.custom) ? generate(settings) : generateCustomised(settings, generate);
+}
+
+/** A piece, or why the settings cannot produce one. */
+export type Attempt = { piece: Piece; error?: undefined } | { piece?: undefined; error: string };
+
+/** Like generatePiece, but a GenerationError comes back as its message instead of being thrown. */
+export function tryGeneratePiece(settings: Settings): Attempt {
+  try {
+    return { piece: generatePiece(settings) };
+  } catch (e) {
+    if (e instanceof GenerationError) return { error: e.message };
+    throw e;
+  }
 }

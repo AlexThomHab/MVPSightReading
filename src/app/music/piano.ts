@@ -38,6 +38,7 @@ import {
   mod,
   tonicSymbol,
 } from './theory';
+import { starts } from './durations';
 
 export function generatePianoPiece(settings: Settings): Piece {
   const { seed, grade, style: styleId } = settings;
@@ -414,15 +415,6 @@ function cadenceRhythm(ctx: Ctx, final: boolean, split?: number): number[] {
   return tails.includes(time.barTicks) ? [time.barTicks] : [4, 2, 12];
 }
 
-function onsets(rhythm: number[]): number[] {
-  const out: number[] = [];
-  let t = 0;
-  for (const d of rhythm) {
-    out.push(t);
-    t += d;
-  }
-  return out;
-}
 
 function planRhythms(ctx: Ctx, phrases: Phrase[], segments: Segment[][]): number[][] {
   const rhythms: number[][] = [];
@@ -445,7 +437,7 @@ function planRhythms(ctx: Ctx, phrases: Phrase[], segments: Segment[][]): number
       if (bars[b]) continue;
       const split = splitOf(s + b);
       // Bar 3 often echoes bar 1's rhythm, which helps the piece sound like it has an idea.
-      const echo = b === 2 && ctx.rng.chance(0.55) && (split === undefined || onsets(bars[0]).includes(split));
+      const echo = b === 2 && ctx.rng.chance(0.55) && (split === undefined || starts(bars[0]).includes(split));
       bars[b] = echo ? bars[0] : barRhythm(ctx, b === 1 ? 1 : 2, split);
     }
     bars[3] = cadenceRhythm(ctx, isLast, splitOf(s + 3));
@@ -507,7 +499,7 @@ function buildMelody(ctx: Ctx, phrases: Phrase[], segments: Segment[][], rhythms
   phrases.forEach((phrase) => {
     for (let b = phrase.startBar; b < phrase.startBar + 4; b++) {
       barStart[b] = slots.length;
-      onsets(rhythms[b]).forEach((onset, i) => {
+      starts(rhythms[b]).forEach((onset, i) => {
         const ticks = rhythms[b][i];
         const isPhraseEnd = b === phrase.startBar + 3 && i === rhythms[b].length - 1;
         // The opening's second bar is reused before a different chord, so it must end on a chord tone.

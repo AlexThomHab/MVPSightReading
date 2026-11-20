@@ -1,12 +1,12 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, linkedSignal, signal, untracked } from '@angular/core';
-import { generatePiece } from './music/generator';
-import { describePhrases } from './music/analysis';
-import { Customisation, GenerationError, decodeCustomisation, encodeCustomisation, isDefault } from './music/constraints';
+import { Attempt, generatePiece, tryGeneratePiece } from './music/generator';
+import { Customisation, encodeCustomisation, isDefault } from './music/constraints';
 import { Piece, Settings } from './music/model';
 import { GRADES, Grade, TimeSignatureId, isGrade, isTimeSignatureId } from './music/grades';
 import { freshSeed } from './music/random';
-import { STYLES, STYLE_IDS, StyleId, isStyleId, keysFor, timesFor } from './music/styles';
-import { Key, keyById, keyName } from './music/theory';
+import { STYLES, STYLE_IDS, StyleId, isStyleId } from './music/styles';
+import { keyById, keyName } from './music/theory';
+import { keyChoices, sameSettings, settingsFromQuery, settingsToQuery, timeChoices } from './settings-link';
 import { CustomisePanelComponent } from './customise/customise-panel.component';
 import { AnswerCheckState } from './ear-training/answer-check.state';
 import { CheckResultsComponent } from './ear-training/check-results.component';
@@ -18,61 +18,8 @@ import { NoteInputView } from './score/score.component';
 import { PlaybackService } from './playback/playback.service';
 import { ScoreComponent } from './score/score.component';
 
-/**
- * The time signatures the Time menu offers: the style's own metres (chorales are in 4/4), else
- * the user's chosen metres, else the grade's.
- */
-function timeChoices(grade: Grade, style: StyleId, custom: Customisation | undefined): TimeSignatureId[] {
-  return !STYLES[style].metres && custom?.timeSignatures ? [...custom.timeSignatures] : timesFor(grade, style);
-}
-
-/** The keys the Key menu offers: the grade's (and style's), only major ones without accidentals. */
-function keyChoices(grade: Grade, style: StyleId, custom: Customisation | undefined): Key[] {
-  return keysFor(grade, style).filter((k) => custom?.accidentals !== false || k.mode === 'major');
-}
-
-/** Reads ?seed=…&grade=…&style=…&key=…&time=…&c=… so a piece can be shared as a link. */
-function settingsFromUrl(): Settings {
-  const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search);
-  const grade = Number(params.get('grade'));
-  const style = params.get('style');
-  const settings: Settings = {
-    seed: params.get('seed') || freshSeed(),
-    grade: isGrade(grade) ? grade : 1,
-    style: isStyleId(style) ? style : 'classical',
-  };
-  const custom = decodeCustomisation(params.get('c'));
-  if (!isDefault(custom)) settings.custom = custom;
-  const keyId = params.get('key');
-  if (keyId && keyChoices(settings.grade, settings.style, settings.custom).some((k) => k.id === keyId)) settings.keyId = keyId;
-  const timeId = params.get('time');
-  if (isTimeSignatureId(timeId) && timeChoices(settings.grade, settings.style, settings.custom).includes(timeId)) settings.timeId = timeId;
-  return settings;
-}
-
-/** True when two settings describe the same piece. */
-function sameSettings(a: Settings, b: Settings): boolean {
-  return (
-    a.seed === b.seed &&
-    a.grade === b.grade &&
-    a.style === b.style &&
-    a.keyId === b.keyId &&
-    a.timeId === b.timeId &&
-    encodeCustomisation(a.custom) === encodeCustomisation(b.custom)
-  );
-}
-
-/** A piece, or why the settings could not produce one. */
-type Attempt = { piece: Piece; error?: undefined } | { piece?: undefined; error: string };
-
-function attempt(settings: Settings): Attempt {
-  try {
-    return { piece: generatePiece(settings) };
-  } catch (e) {
-    if (e instanceof GenerationError) return { error: e.message };
-    throw e;
-  }
-}
+/** The fastest the tempo slider goes (beats per minute). */
+const MAX_BPM = 140;
 
 @Component({
   selector: 'app-root',
@@ -95,7 +42,7 @@ export class App {
   protected readonly grades = GRADES;
   protected readonly styles = STYLE_IDS.map((id) => STYLES[id]);
 
-  private readonly initial = settingsFromUrl();
+  private readonly initial = settingsFromQuery(typeof location === 'undefined' ? '' : location.search);
   protected readonly seed = signal(this.initial.seed);
   protected readonly grade = signal<Grade>(this.initial.grade);
   protected readonly style = signal<StyleId>(this.initial.style);
@@ -132,7 +79,7 @@ export class App {
    * transcribed never changes underneath the listener.
    */
   private readonly applied = signal<Settings>(this.settings(), { equal: sameSettings });
-  private readonly attempt = computed(() => attempt(this.applied()));
+  private readonly attempt = computed(() => tryGeneratePiece(this.applied()));
   /**
    * The piece on screen. When customised settings cannot produce a piece, the last piece stays
    * (or, on first load, the grade's own) and `generationError` says why.
@@ -167,11 +114,12 @@ export class App {
   );
 
   /** Playback tempo; resets to the score's tempo whenever the piece changes. */
-  protected readonly bpm = linkedSignal(() => this.piece().tempo.bpm);
+  protected readonly bpm = linkedSignal(() => Math.min(MAX_BPM, this.piece().tempo.bpm));
 
+  /** Half to one and a half times the score's tempo, but never above MAX_BPM. */
   protected readonly tempoRange = computed(() => {
     const bpm = this.piece().tempo.bpm;
-    return { min: Math.round(bpm * 0.5), max: Math.round(bpm * 1.5) };
+    return { min: Math.min(MAX_BPM, Math.round(bpm * 0.5)), max: Math.min(MAX_BPM, Math.round(bpm * 1.5)) };
   });
 
   protected readonly subtitle = computed(() => {
@@ -181,8 +129,6 @@ export class App {
       .join(' · ');
   });
 
-  /** Phrase-by-phrase analysis for teachers: bars, any sequence, and the cadence. */
-  protected readonly analysis = computed(() => describePhrases(this.piece()));
 
   protected readonly tempoLabel = computed(() => {
     const unit = this.piece().tempo.beatUnit;
@@ -200,12 +146,7 @@ export class App {
       const s = this.applied();
       // (Settings that could not produce a piece are not worth sharing: keep the last good link.)
       if (typeof history === 'undefined' || this.attempt().error) return;
-      const params = new URLSearchParams({ seed: s.seed, grade: String(s.grade), style: s.style });
-      if (s.keyId) params.set('key', s.keyId);
-      if (s.timeId) params.set('time', s.timeId);
-      const c = encodeCustomisation(s.custom);
-      if (c) params.set('c', c);
-      history.replaceState(null, '', `${location.pathname}?${params}`);
+      history.replaceState(null, '', location.pathname + settingsToQuery(s));
     });
     // A new piece stops whatever is playing, and (in Ear Training) is concealed afresh.
     effect(() => {
@@ -306,10 +247,11 @@ export class App {
     if (event.defaultPrevented) return;
     const target = event.target as HTMLElement | null;
     if (target?.closest?.('input, select, textarea, [contenteditable="true"]')) return;
-    // Space plays, unless it is pressing a focused button.
-    if (event.key === ' ' && !event.ctrlKey && !event.metaKey && !target?.closest?.('button, summary, a')) {
+    // Space is always Play (as in MuseScore): the selected bars, or the whole piece — even when
+    // a button (a bar just clicked, a note value) has the focus. Enter still presses a button.
+    if (event.key === ' ' && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
-      this.togglePlay();
+      if (!event.repeat) this.togglePlay();
       return;
     }
     if (this.ear.active() && this.input.handleKey(event)) event.preventDefault();

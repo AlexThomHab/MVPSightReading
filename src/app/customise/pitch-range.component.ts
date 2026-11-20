@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { PitchRangeSetting, formatPitch, parsePitch } from '../music/constraints';
 import { diatonicIndex, naturalAt } from '../music/theory';
+import { CLEF, HEAD } from '../score/glyphs';
 
 /** Half a staff space, in SVG units: one diatonic step. */
 const STEP = 5;
@@ -28,7 +29,7 @@ const HIGHEST = diatonicIndex({ letter: 'C', alter: 0, octave: 8 });
           @for (y of n.ledgers; track y) {
             <line [attr.x1]="n.x - 5" [attr.x2]="n.x + 17" [attr.y1]="y" [attr.y2]="y" class="staff-line" />
           }
-          <text class="glyph" [attr.x]="n.x" [attr.y]="n.y" [attr.font-size]="font">&#xE0A2;</text>
+          <text class="glyph" [attr.x]="n.x" [attr.y]="n.y" [attr.font-size]="font">{{ head }}</text>
         }
       </svg>
       <div class="ends">
@@ -62,7 +63,6 @@ const HIGHEST = diatonicIndex({ letter: 'C', alter: 0, octave: 8 });
     .end strong { font-variant-numeric: tabular-nums; min-width: 2.4em; }
     .steppers { display: flex; gap: 4px; }
     .steppers button { width: 40px; height: 36px; padding: 0; font-size: 0.8rem; }
-    .steppers button:disabled { opacity: 0.35; cursor: default; }
   `,
 })
 export class PitchRangeComponent {
@@ -72,6 +72,7 @@ export class PitchRangeComponent {
   readonly rangeChange = output<PitchRangeSetting>();
 
   protected readonly font = NOTE_FONT;
+  protected readonly head = HEAD.whole;
   private readonly lowIndex = computed(() => diatonicIndex(parsePitch(this.range().low) ?? naturalAt(28)));
   private readonly highIndex = computed(() => diatonicIndex(parsePitch(this.range().high) ?? naturalAt(35)));
   protected readonly lowName = computed(() => formatPitch(naturalAt(this.lowIndex())));
@@ -83,7 +84,7 @@ export class PitchRangeComponent {
   private readonly y = (D: number) => -(D - this.bottom()) * STEP;
 
   protected readonly staffLines = computed(() => [0, 2, 4, 6, 8].map((k) => this.y(this.bottom() + k)));
-  protected readonly clefGlyph = computed(() => (this.clef() === 'treble' ? '' : ''));
+  protected readonly clefGlyph = computed(() => CLEF[this.clef()]);
   /** The G clef curls round the G line; the F clef's dots straddle the F line. */
   protected readonly clefY = computed(() => this.y(this.bottom() + (this.clef() === 'treble' ? 2 : 6)));
 

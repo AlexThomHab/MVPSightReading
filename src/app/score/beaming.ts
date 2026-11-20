@@ -10,6 +10,7 @@
  *
  * Durations are in ticks (semiquaver = 1). Returns the indices of the notes in each beam.
  */
+import { onsets } from '../music/durations';
 import { TimeSignature } from '../music/grades';
 
 export interface BeamableNote {
@@ -27,9 +28,9 @@ function windows(time: TimeSignature, notes: readonly BeamableNote[]): [number, 
   if (time.compound) return Array.from({ length: bar / 6 }, (_, i) => [i * 6, i * 6 + 6]);
   const halves: [number, number][] =
     time.id === '3/4' ? [[0, 8], [8, 12]] : Array.from({ length: Math.ceil(bar / 8) }, (_, i) => [i * 8, Math.min(bar, i * 8 + 8)]);
-  const onsets = notes.reduce<number[]>((acc, _, i) => [...acc, i === 0 ? 0 : acc[i - 1] + notes[i - 1].ticks], []);
+  const starts = onsets(notes);
   return halves.flatMap(([a, b]): [number, number][] => {
-    const inside = notes.map((n, i) => ({ n, at: onsets[i] })).filter(({ at }) => at >= a && at < b);
+    const inside = notes.map((n, i) => ({ n, at: starts[i] })).filter(({ at }) => at >= a && at < b);
     const plainQuavers = inside.length > 0 && inside.every(({ n, at }) => n.ticks === QUAVER && !n.rest && at + n.ticks <= b);
     if (plainQuavers) return [[a, b]];
     // Otherwise beat by beat.

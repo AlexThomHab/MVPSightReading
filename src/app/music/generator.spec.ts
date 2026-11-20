@@ -2,18 +2,21 @@ import { generatePiece } from './generator';
 import { Cadence, Note, Piece, SequenceName } from './model';
 import { keysFor, timesFor } from './styles';
 import { GRADES, GRADE_SPECS } from './grades';
-import { PIANO_STYLE_IDS as STYLE_IDS } from './piano-styles';
+import { PIANO_STYLES, PianoStyleId } from './piano-styles';
 import {
   LETTERS,
+  Pitch,
   bassDegree,
   chordFor,
   diatonicIndex,
   isSingableInterval,
   keySignatureAlter,
   pitchName,
-  samePitchClass,
   tonicSymbol,
 } from './theory';
+
+const STYLE_IDS = Object.keys(PIANO_STYLES) as PianoStyleId[];
+const samePitchClass = (a: Pitch, b: Pitch) => a.letter === b.letter && a.alter === b.alter;
 
 const SEEDS_PER_COMBINATION = 200;
 

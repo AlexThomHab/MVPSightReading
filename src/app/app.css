@@ -114,77 +114,24 @@
   color: var(--muted);
 }
 
-select,
-button {
-  font: inherit;
-  height: 38px;
-  border-radius: 8px;
-  border: 1px solid var(--line-strong);
-  background: var(--paper);
-  color: var(--ink);
-}
-
 select {
-  padding: 0 32px 0 10px;
   min-width: 132px;
 }
 
 button {
   padding: 0 16px;
-  cursor: pointer;
-  white-space: nowrap;
 }
 
-button:hover {
-  border-color: var(--ink);
-}
-
-button:focus-visible,
-select:focus-visible,
-input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.segmented {
-  display: inline-flex;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
+/* The grade: five square buttons. */
 .segmented button {
-  border: 0;
-  border-radius: 0;
   width: 40px;
   padding: 0;
-  height: 36px;
-}
-
-.segmented button + button {
-  border-left: 1px solid var(--line-strong);
-}
-
-.segmented button.selected {
-  background: var(--ink);
-  color: var(--paper);
 }
 
 .actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-}
-
-button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-  font-weight: 600;
-}
-
-button.primary:hover {
-  background: var(--accent-strong);
 }
 
 .tempo {
@@ -262,49 +209,6 @@ button.primary:hover {
   color: #888;
 }
 
-.analysis {
-  margin-top: 16px;
-  padding: 14px 18px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  font-size: 0.9rem;
-}
-
-.analysis h3 {
-  margin: 0 0 8px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-}
-
-.analysis ol {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 6px;
-}
-
-.analysis li {
-  display: grid;
-  grid-template-columns: 7.5em 1fr;
-  column-gap: 12px;
-}
-
-.analysis-bars {
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.analysis-chords {
-  grid-column: 2;
-  color: var(--muted);
-  font-family: var(--serif);
-}
-
 @media print {
   :host {
     max-width: none;
@@ -313,8 +217,7 @@ button.primary:hover {
 
   .site-header,
   .toolbar,
-  .notice,
-  .analysis {
+  .notice {
     display: none;
   }
 

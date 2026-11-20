@@ -6,7 +6,8 @@
  * yet revealed for the listener's own notes before drawing.)
  */
 import type * as VF from 'vexflow/bravura';
-import { Bar, Note, NoteRef, Piece } from '../music/model';
+import { totalTicks, valueOf } from '../music/durations';
+import { Bar, Note, NoteRef, Piece, Staff } from '../music/model';
 import { Key, Pitch, keySignatureAlter } from '../music/theory';
 import { beamGroups } from './beaming';
 
@@ -19,14 +20,11 @@ const TOP = 56;
 const STAVE_GAP = 110;
 const SYSTEM_HEIGHT = 250;
 
-/** How the score is shown (Ear Training numbers the bars and may hide the key and time). */
+/** How the score is shown. */
 export interface ScoreView {
-  /** Ear Training: number the bars; `revealed` bars hold the original, the rest the listener's notes. */
+  /** Ear Training: number the bars (and no tempo); `revealed` bars hold the original, the rest the listener's notes. */
   concealed: boolean;
   revealed: ReadonlySet<number>;
-  showKey: boolean;
-  showTime: boolean;
-  showTempo: boolean;
   /** Checked answers: colours for the listener's noteheads, by bar. */
   marks?: ReadonlyMap<number, BarMarks>;
 }
@@ -47,7 +45,7 @@ export interface BarBox {
 
 /** Where a note or rest is drawn (score units), for note selection and input. */
 export interface ElementGeometry {
-  staff: 'rh' | 'lh';
+  staff: Staff;
   index: number;
   /** Ticks from the start of the bar, and the length. */
   tick: number;
@@ -85,20 +83,6 @@ export interface Drawing {
 }
 
 export const STAFF_SPACE = 10;
-
-const DURATIONS: Record<number, { duration: string; dots: number }> = {
-  16: { duration: 'w', dots: 0 },
-  12: { duration: 'h', dots: 1 },
-  8: { duration: 'h', dots: 0 },
-  6: { duration: 'q', dots: 1 },
-  4: { duration: 'q', dots: 0 },
-  3: { duration: '8', dots: 1 },
-  2: { duration: '8', dots: 0 },
-  1.5: { duration: '16', dots: 1 },
-  1: { duration: '16', dots: 0 },
-  0.75: { duration: '32', dots: 1 },
-  0.5: { duration: '32', dots: 0 },
-};
 
 function vexKey(p: Pitch): string {
   const acc = p.alter > 0 ? '#'.repeat(p.alter) : 'b'.repeat(-p.alter);
@@ -163,11 +147,8 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
     svg.style.removeProperty('height');
   }
 
-  // Key and time signatures keep their space even when hidden, so hiding them moves nothing.
   const keySpec = piece.key.id;
   const timeSpec = `${piece.time.num}/${piece.time.den}`;
-  // With the key signature hidden, notes show every accidental explicitly.
-  const accidentalsFrom = view.concealed && !view.showKey ? 'C' : keySpec;
   const boxes: BarBox[] = [];
   const geometry: BarGeometry[] = [];
   // In Ear Training a tie never joins the listener's notes to the original's.
@@ -200,13 +181,13 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
     const available = PAGE_WIDTH - LEFT - RIGHT - modifierWidth;
     // Give each bar at least the room its notes need, then share out the rest.
     const minWidths = bars.map((bar) => {
-      const built = buildBar(vf, piece, bar, accidentalsFrom);
+      const built = buildBar(vf, piece, bar);
       const formatter = new Formatter().joinVoices(built.treble).joinVoices(built.bass);
       return formatter.preCalculateMinTotalWidth([...built.treble, ...built.bass]) + 36;
     });
     const total = minWidths.reduce((a, b) => a + b, 0);
     // Spare room goes to bars in proportion to their length, so a one-beat upbeat stays narrow.
-    const lengths = bars.map((bar) => bar.rh.reduce((a, n) => a + n.ticks, 0));
+    const lengths = bars.map((bar) => totalTicks(bar.rh));
     const totalLength = lengths.reduce((a, b) => a + b, 0);
     const widths =
       total <= available
@@ -229,7 +210,7 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
           treble.addTimeSignature(timeSpec);
           bass.addTimeSignature(timeSpec);
         }
-        if (line === 0 && view.showTempo) {
+        if (line === 0 && !view.concealed) {
           const t = piece.tempo;
           treble.setTempo(
             {
@@ -257,7 +238,7 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
       new StaveConnector(treble, bass).setType(isFinal ? 'boldDoubleRight' : 'singleRight').setContext(ctx).draw();
 
       const dynamics = expression ? dynamicsByBar.get(barIndex) : barIndex === 0 && piece.dynamic ? new Map([[0, piece.dynamic]]) : undefined;
-      const built = buildBar(vf, piece, bar, accidentalsFrom, dynamics, view.marks?.get(barIndex));
+      const built = buildBar(vf, piece, bar, dynamics, view.marks?.get(barIndex));
       lineMelody.set(barIndex, built.melody);
       lineBass.set(barIndex, built.bassNotes);
       built.treble.forEach((v) => v.setStave(treble));
@@ -292,7 +273,7 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
           noteStart: treble.getNoteStartX(),
           rhTop: treble.getYForLine(0),
           lhTop: bass.getYForLine(0),
-          length: bar.rh.reduce((a, n) => a + n.ticks, 0),
+          length: totalTicks(bar.rh),
           elements,
         });
       }
@@ -312,8 +293,6 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
     if (expression) drawLineMarks(vf, ctx, expression, layout[line], lineMelody, dynamicsByBar);
   }
   // Hidden hints keep their space (so nothing moves) but are not drawn.
-  if (svg && !view.showKey) svg.querySelectorAll('.vf-keysignature').forEach((g) => g.setAttribute('visibility', 'hidden'));
-  if (svg && !view.showTime) svg.querySelectorAll('.vf-timesignature').forEach((g) => g.setAttribute('visibility', 'hidden'));
   return { boxes, bars: geometry, width: PAGE_WIDTH, height };
 }
 
@@ -326,7 +305,7 @@ function drawCrossBarTies(
   ctx: VF.RenderContext,
   piece: Piece,
   barsInLine: number[],
-  drawn: Record<'rh' | 'lh', Map<number, VF.StaveNote[]>>,
+  drawn: Record<Staff, Map<number, VF.StaveNote[]>>,
   sameSource: (a: number, b: number) => boolean,
 ): void {
   const { StaveTie } = vf;
@@ -357,9 +336,8 @@ function drawCrossBarTies(
 }
 
 /** The accidental to print on an ornament's note or a grace note, against the key signature. */
-function accidentalFor(p: Pitch, key: Key | null): string | null {
-  const expected = key ? keySignatureAlter(key, p.letter) : 0;
-  if (p.alter === expected) return null;
+function accidentalFor(p: Pitch, key: Key): string | null {
+  if (p.alter === keySignatureAlter(key, p.letter)) return null;
   return p.alter === 0 ? 'n' : p.alter > 0 ? '#'.repeat(p.alter) : 'b'.repeat(-p.alter);
 }
 
@@ -451,10 +429,10 @@ function drawLineMarks(
   }
 }
 
-function buildBar(vf: typeof VF, piece: Piece, bar: Bar, keySpec: string, dynamics?: Map<number, string>, marks?: BarMarks): BuiltBar {
+function buildBar(vf: typeof VF, piece: Piece, bar: Bar, dynamics?: Map<number, string>, marks?: BarMarks): BuiltBar {
   const { Voice, Accidental, Beam, Annotation, Articulation, Modifier, StaveTie, Stem, GraceNote, GraceNoteGroup, Ornament } = vf;
-  // Ornament and grace-note accidentals are read against the key signature (if it is shown).
-  const key = keySpec === piece.key.id ? piece.key : null;
+  // Ornament and grace-note accidentals are read against the key signature.
+  const key = piece.key;
   const groups = Beam.getDefaultBeamGroups(`${piece.time.num}/${piece.time.den}`);
   const beams: VF.Beam[] = [];
   const ties: VF.StaveTie[] = [];
@@ -518,7 +496,7 @@ function buildBar(vf: typeof VF, piece: Piece, bar: Bar, keySpec: string, dynami
       }
     });
     // Bars may be short (a chorale's upbeat and final bar), so size the voice to its notes.
-    const ticks = notes.reduce((a, n) => a + n.ticks, 0);
+    const ticks = totalTicks(notes);
     const voice = new Voice({ numBeats: ticks / unit, beatValue: piece.time.den });
     voice.addTickables(staveNotes);
     if (stem === undefined) {
@@ -541,8 +519,8 @@ function buildBar(vf: typeof VF, piece: Piece, bar: Bar, keySpec: string, dynami
     treble = [toVoice(bar.rh, 'treble', undefined, undefined, marks?.rh)];
     bass = [toVoice(bar.lh, 'bass', undefined, undefined, marks?.lh)];
   }
-  Accidental.applyAccidentals(treble.map((v) => v.voice), keySpec);
-  Accidental.applyAccidentals(bass.map((v) => v.voice), keySpec);
+  Accidental.applyAccidentals(treble.map((v) => v.voice), key.id);
+  Accidental.applyAccidentals(bass.map((v) => v.voice), key.id);
   for (const [index, text] of dynamics ?? []) {
     const note = treble[0].staveNotes[index];
     if (!note) continue;
@@ -563,8 +541,9 @@ function buildBar(vf: typeof VF, piece: Piece, bar: Bar, keySpec: string, dynami
 
 function makeNote(vf: typeof VF, n: Note, clef: 'treble' | 'bass', stem?: number): VF.StaveNote {
   const { StaveNote, Dot } = vf;
-  const d = DURATIONS[n.ticks];
-  if (!d) throw new Error(`No notation for a duration of ${n.ticks} semiquavers`);
+  const value = valueOf(n.ticks);
+  if (!value) throw new Error(`No notation for a duration of ${n.ticks} semiquavers`);
+  const d = { duration: value.vex, dots: value.dotted ? 1 : 0 };
   const note = n.rest
     ? new StaveNote({ keys: [clef === 'bass' ? 'd/3' : 'b/4'], duration: d.duration, dots: d.dots, type: 'r', clef })
     : new StaveNote({

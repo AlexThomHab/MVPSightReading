@@ -5,13 +5,14 @@
  *
  * Every voice always fills its bar exactly. Writing works like MuseScore's note input: a new
  * note or rest overwrites whatever stood where it goes (the remainder of a note it cuts short
- * becomes rests), and a note longer than the room left in the bar carries on, tied, into the
- * next bar. Durations are in ticks (semiquaver = 1, so a demisemiquaver is 0.5).
+ * becomes rests). A note must fit in its bar (note input checks before writing). Durations
+ * are in ticks (semiquaver = 1, so a demisemiquaver is 0.5).
  */
-import { Bar, Expression, Note, Piece } from '../music/model';
+import { NOTE_VALUES, isPlain, onsets, splitTicks, totalTicks } from '../music/durations';
+import { Bar, Expression, Note, Piece, Staff } from '../music/model';
 import { Key, LETTERS, Letter, Pitch, diatonicIndex, keySignatureAlter, midi, naturalAt } from '../music/theory';
 
-export type Staff = 'rh' | 'lh';
+export type { Staff };
 
 export interface TranscribedBar {
   rh: Note[];
@@ -40,24 +41,8 @@ export interface Position {
   tick: number;
 }
 
-/** The note values the editor writes, longest first: whole to demisemiquaver, plain and dotted. */
-export const NOTE_TICKS: readonly number[] = [16, 12, 8, 6, 4, 3, 2, 1.5, 1, 0.75, 0.5];
 const EPS = 1e-6;
 
-/** A length as the fewest note values (longest first), e.g. 5 → [4, 1]. */
-export function splitTicks(total: number): number[] {
-  const out: number[] = [];
-  let left = total;
-  while (left > EPS) {
-    const value = NOTE_TICKS.find((t) => t <= left + EPS);
-    if (value === undefined) break;
-    out.push(value);
-    left -= value;
-  }
-  return out;
-}
-
-const PLAIN = [16, 8, 4, 2, 1, 0.5];
 const multiple = (a: number, b: number) => Math.abs(a / b - Math.round(a / b)) < EPS;
 
 /**
@@ -75,7 +60,7 @@ export function restsBetween(from: number, to: number, compound: boolean): Note[
     const allowed = (v: number) => {
       if (at + v > to + EPS) return false;
       if (at < EPS && Math.abs(v - to) < EPS) return true;
-      const plain = PLAIN.includes(v);
+      const plain = isPlain(v);
       const oneBeat = Math.floor(at / beat + EPS) === Math.floor((at + v) / beat - EPS);
       if (oneBeat) {
         if (multiple(at, beat) && Math.abs(v - beat) < EPS) return true;
@@ -83,7 +68,7 @@ export function restsBetween(from: number, to: number, compound: boolean): Note[
       }
       return multiple(at, beat) && multiple(v, beat) && (compound ? multiple(v, 6) : plain && multiple(at, v));
     };
-    const value = NOTE_TICKS.find(allowed) ?? splitTicks(to - at)[0];
+    const value = NOTE_VALUES.map((v) => v.ticks).find(allowed) ?? splitTicks(to - at)[0];
     out.push({ pitches: [], ticks: value, rest: true });
     at += value;
   }
@@ -92,20 +77,9 @@ export function restsBetween(from: number, to: number, compound: boolean): Note[
 
 /** Every bar of the piece, empty (rests) on both staves. */
 export function emptyTranscription(piece: Piece): Transcription {
-  const lengths = piece.bars.map((b) => b.rh.reduce((a, n) => a + n.ticks, 0));
+  const lengths = piece.bars.map((b) => totalTicks(b.rh));
   const compound = piece.time.compound;
   return { lengths, compound, bars: lengths.map((len) => ({ rh: restsBetween(0, len, compound), lh: restsBetween(0, len, compound) })) };
-}
-
-/** Where each element of a voice starts. */
-export function onsets(voice: readonly Note[]): number[] {
-  const out: number[] = [];
-  let at = 0;
-  for (const n of voice) {
-    out.push(at);
-    at += n.ticks;
-  }
-  return out;
 }
 
 export function elementOf(t: Transcription, ref: ElementRef): Note | undefined {
@@ -130,7 +104,7 @@ export function positionOf(t: Transcription, ref: ElementRef): Position {
 }
 
 /** A position moved past the end of its bar becomes the start of the next; null past the last bar. */
-export function normalise(t: Transcription, pos: Position): Position | null {
+function normalise(t: Transcription, pos: Position): Position | null {
   let { bar, tick } = pos;
   while (bar < t.lengths.length && tick >= t.lengths[bar] - EPS) {
     tick -= t.lengths[bar];
@@ -201,31 +175,19 @@ export interface WriteResult {
 }
 
 /**
- * Writes a note (or a rest, when `pitches` is null) of `ticks` at a position, overwriting
- * what was there; across a bar line it is split and tied. Past the last bar it is cut short.
+ * Writes a note (or a rest, when `pitches` is null) of `ticks` at a position, overwriting what
+ * was there. Whatever would run past the bar line is cut off: note input checks that a note
+ * fits before writing it.
  */
 export function write(t: Transcription, pos: Position, ticks: number, pitches: readonly Pitch[] | null): WriteResult {
   const out = copy(t);
-  const sorted = pitches ? [...pitches].sort((a, b) => midi(a) - midi(b)) : null;
-  const written: ElementRef[] = [];
-  let left = ticks;
-  let at: Position | null = { ...pos };
-  while (left > EPS && at) {
-    const room = out.lengths[at.bar] - at.tick;
-    const take = Math.min(left, room);
-    const fill = splitTicks(take).map((d): Note => (sorted ? { pitches: sorted.map((p) => ({ ...p })), ticks: d } : { pitches: [], ticks: d, rest: true }));
-    const voice = overwrite(out.bars[at.bar][at.staff], at.tick, take, fill, out.compound);
-    out.bars[at.bar][at.staff] = voice;
-    const tick = at.tick;
-    const first = onsets(voice).findIndex((s) => Math.abs(s - tick) < EPS);
-    const { bar, staff } = at;
-    fill.forEach((_, k) => written.push({ bar, staff, index: first + k }));
-    left -= take;
-    at = normalise(out, { ...at, tick: at.tick + take });
-  }
-  // A note split into pieces (or carried over the bar line) is tied piece to piece.
-  if (sorted) written.slice(0, -1).forEach((r) => (out.bars[r.bar][r.staff][r.index].tie = true));
-  return { transcription: tidyTies(out), placed: written[0], next: at };
+  const length = Math.min(ticks, out.lengths[pos.bar] - pos.tick);
+  const sorted = pitches && [...pitches].sort((a, b) => midi(a) - midi(b));
+  const note: Note = sorted ? { pitches: sorted.map((p) => ({ ...p })), ticks: length } : { pitches: [], ticks: length, rest: true };
+  const voice = overwrite(out.bars[pos.bar][pos.staff], pos.tick, length, [note], out.compound);
+  out.bars[pos.bar][pos.staff] = voice;
+  const index = onsets(voice).findIndex((s) => Math.abs(s - pos.tick) < EPS);
+  return { transcription: tidyTies(out), placed: { bar: pos.bar, staff: pos.staff, index }, next: normalise(out, { ...pos, tick: pos.tick + length }) };
 }
 
 /** Adds a note to the chord at `ref` (a rest there becomes that note). */

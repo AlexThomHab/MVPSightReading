@@ -13,11 +13,11 @@
  * derived, deterministic seed) a bounded number of times and reports why if it cannot comply.
  */
 import { ConstraintIssue, Customisation, GenerationConstraints, GenerationError, canFill, melodicIntervalAllowed, resolveConstraints, validateSettings } from './constraints';
-import type { Bar, Note, Piece, Settings } from './model';
+import type { Bar, Note, Piece, Settings, Staff } from './model';
 import { Random } from './random';
 import { Pitch, diatonicIndex, keySignatureAlter, midi, pitchName } from './theory';
+import { onsets, totalTicks } from './durations';
 
-type Hand = 'rh' | 'lh';
 
 /** The pitches sounding at tick `t` of a bar's hand, or null in a rest. */
 function soundingAt(notes: readonly Note[], t: number): Note | null {
@@ -29,7 +29,6 @@ function soundingAt(notes: readonly Note[], t: number): Note | null {
   return null;
 }
 
-const onsetsOf = (notes: readonly Note[]) => notes.reduce<number[]>((acc, _, i) => [...acc, i === 0 ? 0 : acc[i - 1] + notes[i - 1].ticks], []);
 
 /** Where the harmony changes in a bar (and its end). */
 const harmonyCuts = (bar: Bar, barTicks: number) => [...bar.harmony.map((h) => h.at).filter((t) => t > 0), barTicks];
@@ -53,7 +52,7 @@ function refit(notes: readonly Note[], bar: Bar, barTicks: number, noteTicks: re
       const remaining = end - t;
       // The original note's remaining length, or the nearest allowed value that still lets the span be filled.
       let sourceEnd = t;
-      for (const [i, at] of onsetsOf(notes).entries()) if (at <= t) sourceEnd = at + notes[i].ticks;
+      for (const [i, at] of onsets(notes).entries()) if (at <= t) sourceEnd = at + notes[i].ticks;
       const want = Math.min(sourceEnd - t, remaining);
       const fits = noteTicks.filter((d) => d <= remaining && canFill(remaining - d, noteTicks));
       const d = fits.filter((x) => x <= want).sort((a, b) => b - a)[0] ?? fits.sort((a, b) => a - b)[0];
@@ -145,7 +144,7 @@ function clampExpression(piece: Piece): void {
 }
 
 /** Applies the customisation to a generated piece (a new piece; the input is not changed). */
-export function applyConstraints(input: Piece, c: GenerationConstraints): Piece {
+function applyConstraints(input: Piece, c: GenerationConstraints): Piece {
   const piece: Piece = structuredClone(input);
   const rng = new Random(`${piece.seed}|customise`);
   const chorale = !!piece.bars[0].voices;
@@ -162,7 +161,7 @@ export function applyConstraints(input: Piece, c: GenerationConstraints): Piece 
   if (!chorale) {
     for (const bar of piece.bars) {
       if (c.independence === 'together') bar.lh = alignHands(bar);
-      for (const hand of ['rh', 'lh'] as Hand[]) bar[hand] = refit(bar[hand], bar, piece.time.barTicks, c.noteTicks, c.restTicks);
+      for (const hand of ['rh', 'lh'] as Staff[]) bar[hand] = refit(bar[hand], bar, piece.time.barTicks, c.noteTicks, c.restTicks);
     }
     addRests(piece, c, rng);
     addTies(piece, c, rng);
@@ -176,11 +175,11 @@ export function applyConstraints(input: Piece, c: GenerationConstraints): Piece 
 // ---------------------------------------------------------------------------
 
 /** Every way a piece breaks the constraints (empty when it keeps them all). */
-export function checkPiece(piece: Piece, c: GenerationConstraints, custom: Customisation): string[] {
+function checkPiece(piece: Piece, c: GenerationConstraints, custom: Customisation): string[] {
   const out: string[] = [];
   const fail = (m: string) => out.length < 20 && out.push(m);
   const chorale = !!piece.bars[0].voices;
-  const parts = (bar: Bar): { hand: Hand; notes: Note[] }[] =>
+  const parts = (bar: Bar): { hand: Staff; notes: Note[] }[] =>
     bar.voices
       ? [
           { hand: 'rh', notes: bar.voices.s },
@@ -194,14 +193,14 @@ export function checkPiece(piece: Piece, c: GenerationConstraints, custom: Custo
         ];
   // A note that needs a written accidental: one that differs from the key signature.
   const written = (p: Pitch) => p.alter !== keySignatureAlter(piece.key, p.letter);
-  const inRange = (p: Pitch, hand: Hand) => {
+  const inRange = (p: Pitch, hand: Staff) => {
     const range = hand === 'rh' ? c.melodyRange : c.bassRange;
     return !range || (midi(p) >= midi(range.low) && midi(p) <= midi(range.high));
   };
 
   piece.bars.forEach((bar, b) => {
     for (const { hand, notes } of parts(bar)) {
-      if (!chorale && notes.reduce((a, n) => a + n.ticks, 0) !== piece.time.barTicks) fail(`bar ${b + 1}: ${hand} does not fill the bar`);
+      if (!chorale && totalTicks(notes) !== piece.time.barTicks) fail(`bar ${b + 1}: ${hand} does not fill the bar`);
       for (const n of notes) {
         if (n.rest ? !c.restTicks.includes(n.ticks) : !c.noteTicks.includes(n.ticks)) fail(`bar ${b + 1}: a ${n.rest ? 'rest' : 'note'} of ${n.ticks} ticks`);
         const sounding = [...n.pitches, ...(n.grace ?? [])];
@@ -247,8 +246,8 @@ export function checkPiece(piece: Piece, c: GenerationConstraints, custom: Custo
     }
     if (c.independence === 'together') {
       piece.bars.forEach((bar, b) => {
-        const rh = new Set(onsetsOf(bar.rh));
-        if (onsetsOf(bar.lh).some((t, i) => !bar.lh[i].rest && !rh.has(t))) fail(`bar ${b + 1}: the hands are not together`);
+        const rh = new Set(onsets(bar.rh));
+        if (onsets(bar.lh).some((t, i) => !bar.lh[i].rest && !rh.has(t))) fail(`bar ${b + 1}: the hands are not together`);
       });
     }
   }

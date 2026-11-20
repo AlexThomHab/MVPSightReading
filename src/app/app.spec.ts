@@ -50,6 +50,16 @@ describe('App', () => {
     expect(play.mock.calls[0][2]).toBeUndefined();
   });
 
+  it('never lets the tempo go above 140', async () => {
+    // A Grade 5 waltz is marked fast: its slider would otherwise run to about 200.
+    history.replaceState(null, '', '/?seed=fast&grade=5&style=waltz');
+    const fixture = TestBed.createComponent(App);
+    await fixture.whenStable();
+    const slider = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>('input[type=range]')!;
+    expect(Number(slider.max)).toBeLessThanOrEqual(140);
+    expect(Number(slider.value)).toBeLessThanOrEqual(140);
+  });
+
   describe('Ear Training mode', () => {
     let fixture: ComponentFixture<App>;
     let el: HTMLElement;
@@ -92,12 +102,10 @@ describe('App', () => {
       expect(el.querySelectorAll('input[type=range]').length).toBe(1);
       const order = [...el.querySelectorAll('.toolbar, app-ear-toolbar, .sheet')].map((n) => n.className || n.tagName);
       expect(order).toEqual(['toolbar', 'APP-EAR-TOOLBAR', 'sheet']);
-      expect(el.querySelector('.analysis')).toBeNull();
       expect(seed()).toBe('spec');
 
       await press('Sight reading');
       expect(el.querySelector('app-ear-toolbar')).toBeNull();
-      expect(el.querySelector('.analysis')).not.toBeNull();
       expect(el.querySelector('.sheet-meta')!.textContent).toBe(subtitle);
       expect(seed()).toBe('spec');
     });
@@ -130,10 +138,18 @@ describe('App', () => {
       await press('▶ Play bars 3–6');
       expect(play.mock.calls[1][2]).toEqual({ fromBar: 2, toBar: 5, loop: true, countIn: false });
 
-      // Space plays too; Clear selection goes back to the whole piece.
+      // Space plays the selection too — even with a bar on the score focused, which it leaves selected.
+      play.mockClear();
+      const bar = el.querySelector<HTMLButtonElement>('.bar-target');
+      const space = new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true });
+      (bar ?? document.body).dispatchEvent(space);
+      expect(space.defaultPrevented).toBe(true);
+      expect(play.mock.calls[0][2]).toMatchObject({ fromBar: 2, toBar: 5 });
+      expect(ear.selection()).toEqual({ from: 2, to: 5 });
+      // With nothing selected, the whole piece.
       await press('Clear selection');
       document.body.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
-      expect(play.mock.calls[2][2]).toMatchObject({ fromBar: 0, toBar: lastBar });
+      expect(play.mock.calls[1][2]).toMatchObject({ fromBar: 0, toBar: lastBar });
     });
 
     it('pauses and resumes while playing', async () => {

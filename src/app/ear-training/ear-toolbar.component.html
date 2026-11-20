@@ -1,7 +1,7 @@
 <section class="ear-panel" aria-label="Ear training">
   <div class="groups">
     <!-- Write: note input, in MuseScore's manner. -->
-    <div class="group" role="toolbar" aria-label="Write notes">
+    <div class="group write" role="toolbar" aria-label="Write notes">
       <button
         type="button"
         class="write-toggle"
@@ -54,6 +54,24 @@
         <button type="button" class="icon" [disabled]="!input.canUndo()" (click)="input.undo()" aria-label="Undo" title="Undo — Ctrl/⌘ Z">↶</button>
         <button type="button" class="icon" [disabled]="!input.canRedo()" (click)="input.redo()" aria-label="Redo" title="Redo — Ctrl Y / ⇧⌘ Z">↷</button>
       </div>
+      <button
+        type="button"
+        class="icon sound"
+        [class.muted]="!input.soundOn()"
+        [attr.aria-pressed]="input.soundOn()"
+        aria-label="Hear notes as you write them"
+        [title]="input.soundOn() ? 'Notes sound as you write them — click to write in silence (M)' : 'Notes are silent as you write them — click to hear them (M)'"
+        (click)="input.toggleSound()"
+      >
+        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+          <path d="M3 7.5h3l4-3.5v12l-4-3.5H3z" fill="currentColor" />
+          @if (input.soundOn()) {
+            <path d="M13 7a4 4 0 0 1 0 6M15 4.5a7.5 7.5 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          } @else {
+            <path d="M13 7.5l5 5M18 7.5l-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          }
+        </svg>
+      </button>
       <details class="menu" #more>
         <summary class="icon" aria-label="More writing options" title="More">⋯</summary>
         <div class="menu-panel">
@@ -64,16 +82,21 @@
     </div>
 
     <!-- Listen: one Play button for the selected bars (or the whole piece). -->
-    <div class="group" role="group" aria-label="Listen">
+    <div class="group listen" role="group" aria-label="Listen">
       <button type="button" class="play" (click)="togglePlay.emit()" [attr.aria-pressed]="playback.playing() && !playback.paused()" title="Play or pause — Space">
         {{ playLabel() }}
       </button>
-      @if (playback.playing()) {
-        <button type="button" class="icon" (click)="stop()" aria-label="Stop" title="Stop">■</button>
-      }
-      @if (ear.selection()) {
-        <button type="button" class="link" (click)="ear.clearSelection()" title="Play the whole piece again">Clear selection</button>
-      }
+      <!-- Always in place (disabled when there is nothing to do), so the row never shifts. -->
+      <button type="button" class="icon" (click)="stop()" [disabled]="!playback.playing()" aria-label="Stop" title="Stop">■</button>
+      <button
+        type="button"
+        class="link"
+        (click)="ear.clearSelection()"
+        [disabled]="!ear.selection()"
+        [title]="ear.selection() ? 'Play the whole piece again' : 'Click bars on the score to select them'"
+      >
+        Clear selection
+      </button>
       <div class="segmented" role="radiogroup" aria-label="What to play">
         <button type="button" role="radio" [class.selected]="ear.source() === 'original'" [attr.aria-checked]="ear.source() === 'original'" (click)="setSource('original')" title="Play the music you are transcribing">Original</button>
         <button type="button" role="radio" [class.selected]="ear.source() === 'mine'" [attr.aria-checked]="ear.source() === 'mine'" (click)="setSource('mine')" title="Play the notes you have written">My notes</button>
@@ -90,7 +113,7 @@
     </div>
 
     <!-- Check and reveal. -->
-    <div class="group" role="group" aria-label="Check and reveal">
+    <div class="group check-group" role="group" aria-label="Check and reveal">
       <button type="button" class="check" (click)="check.check()" title="Mark the bars you've written in — the music stays hidden">
         ✓ {{ check.result() ? 'Check again' : 'Check answers' }}
       </button>

@@ -11,10 +11,12 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { Piece } from '../music/model';
+import { Piece, Staff } from '../music/model';
+import { isPlain } from '../music/durations';
 import { Pitch, diatonicIndex } from '../music/theory';
 import { BarBox, BarMarks, Drawing, ScoreView, drawPiece, loadVexFlow } from './engraving';
-import { InputTarget, Staff, TOP_LINE, elementAt, geometryOf, inputTargetAt, ledgerLines, yOf } from './hit-test';
+import { DOT, FLAG_DOWN, FLAG_UP, REST, headFor } from './glyphs';
+import { InputTarget, TOP_LINE, elementAt, geometryOf, inputTargetAt, ledgerLines, yOf } from './hit-test';
 
 /** A note or rest in the listener's transcription. */
 export interface NoteRefOnScore {
@@ -43,13 +45,6 @@ export interface MissingOnScore {
   pitch: Pitch;
 }
 
-// SMuFL (Bravura) glyphs for the ghost note.
-const HEAD: Record<string, string> = { whole: '', half: '', black: '' };
-const REST: Record<number, string> = { 16: '', 8: '', 4: '', 2: '', 1: '', 0.5: '' };
-const FLAG_UP: Record<number, string> = { 2: '', 1: '', 0.5: '' };
-const FLAG_DOWN: Record<number, string> = { 2: '', 1: '', 0.5: '' };
-const DOT = '';
-const PLAIN = [16, 8, 4, 2, 1, 0.5];
 
 /**
  * The score: renders a piece (see engraving.ts). In Ear Training it also covers hidden bars,
@@ -316,9 +311,6 @@ export class ScoreComponent {
   readonly concealed = input(false);
   /** Bars (0-based) showing the original music while concealed. */
   readonly revealed = input<readonly number[]>([]);
-  readonly showKey = input(true);
-  readonly showTime = input(true);
-  readonly showTempo = input(true);
   /** Selected bars (0-based, inclusive), outlined while concealed. */
   readonly selection = input<{ from: number; to: number } | null>(null);
   /** Note input (Ear Training), or null when the score is not editable. */
@@ -366,9 +358,6 @@ export class ScoreComponent {
   private readonly view = computed<ScoreView>(() => ({
     concealed: this.concealed(),
     revealed: this.revealedSet(),
-    showKey: this.showKey(),
-    showTime: this.showTime(),
-    showTempo: this.showTempo(),
     marks: this.marks(),
   }));
   private readonly host = viewChild.required<ElementRef<HTMLDivElement>>('host');
@@ -468,7 +457,7 @@ export class ScoreComponent {
     const top = t.staff === 'rh' ? g.rhTop : g.lhTop;
     const x = t.x;
     const frame = { top, fits: t.fits, spanW: Math.max(18, t.endX - t.x) };
-    const dotted = !PLAIN.includes(input.ticks);
+    const dotted = !isPlain(input.ticks);
     const base = dotted ? input.ticks / 1.5 : input.ticks;
     if (input.rest) {
       // A semibreve rest hangs from the fourth line; the others sit round the middle line.
@@ -477,7 +466,7 @@ export class ScoreComponent {
     }
     const y = yOf(t.staff, top, t.diatonic);
     const up = t.diatonic < TOP_LINE[t.staff] - 4;
-    const head = base >= 16 ? HEAD['whole'] : base >= 8 ? HEAD['half'] : HEAD['black'];
+    const head = headFor(base);
     const stemX = up ? x + 11.2 : x + 0.6;
     const stemEnd = up ? y - 35 : y + 35;
     const flags = up ? FLAG_UP : FLAG_DOWN;
@@ -537,7 +526,7 @@ export class ScoreComponent {
       });
       const top = m.staff === 'rh' ? g.rhTop : g.lhTop;
       const D = diatonicIndex(m.pitch);
-      const head = m.ticks >= 16 ? HEAD['whole'] : m.ticks >= 8 ? HEAD['half'] : HEAD['black'];
+      const head = headFor(m.ticks);
       return [{ x, y: yOf(m.staff, top, D), glyph: head, ledgers: ledgerLines(m.staff, top, D) }];
     });
   });

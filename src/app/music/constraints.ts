@@ -11,6 +11,7 @@
  * A setting the user has not touched is not overridden: with no customisation at all, every
  * generator behaves exactly as before.
  */
+import { fullName, lengthName } from './durations';
 import { GRADE_SPECS, Grade, GradeSpec, TIME_SIGNATURES, TimeSignatureId } from './grades';
 import type { Settings } from './model';
 import { STYLES } from './styles';
@@ -29,19 +30,21 @@ export interface NoteValue {
   name: string;
 }
 
-export const NOTE_VALUES: readonly NoteValue[] = [
-  { id: 'semibreve', ticks: 16, name: 'Semibreve (whole note)' },
-  { id: 'dottedMinim', ticks: 12, name: 'Dotted minim (dotted half note)' },
-  { id: 'minim', ticks: 8, name: 'Minim (half note)' },
-  { id: 'dottedCrotchet', ticks: 6, name: 'Dotted crotchet (dotted quarter note)' },
-  { id: 'crotchet', ticks: 4, name: 'Crotchet (quarter note)' },
-  { id: 'dottedQuaver', ticks: 3, name: 'Dotted quaver (dotted eighth note)' },
-  { id: 'quaver', ticks: 2, name: 'Quaver (eighth note)' },
-  { id: 'semiquaver', ticks: 1, name: 'Semiquaver (sixteenth note)' },
+const CHOOSABLE: [NoteValueId, number][] = [
+  ['semibreve', 16],
+  ['dottedMinim', 12],
+  ['minim', 8],
+  ['dottedCrotchet', 6],
+  ['crotchet', 4],
+  ['dottedQuaver', 3],
+  ['quaver', 2],
+  ['semiquaver', 1],
 ];
 
-export const ticksOf = (id: NoteValueId) => NOTE_VALUES.find((v) => v.id === id)!.ticks;
-export const noteValueFor = (ticks: number) => NOTE_VALUES.find((v) => v.ticks === ticks);
+/** The note values a customisation can choose from. */
+export const NOTE_VALUES: readonly NoteValue[] = CHOOSABLE.map(([id, ticks]) => ({ id, ticks, name: fullName(ticks) }));
+
+const ticksOf = (id: NoteValueId) => NOTE_VALUES.find((v) => v.id === id)!.ticks;
 
 /** Melodic interval sizes in scale steps: 0 = unison (a repeated note), 1 = a 2nd … 7 = an octave. */
 export const INTERVAL_NAMES = ['Unison', '2nd', '3rd', '4th', '5th', '6th', '7th', 'Octave'] as const;
@@ -337,11 +340,11 @@ export function pitchWindow(key: Key, gradeRange: readonly [number, number], com
 
 /** A key suits the ranges when each contains its tonic. */
 /** Whether a piece may be in this key under these constraints. */
-export function keyAllowed(key: Key, c: GenerationConstraints): boolean {
+function keyAllowed(key: Key, c: GenerationConstraints): boolean {
   return keyFitsRanges(key, c) && (c.accidentals || key.mode === 'major');
 }
 
-export function keyFitsRanges(key: Key, c: GenerationConstraints): boolean {
+function keyFitsRanges(key: Key, c: GenerationConstraints): boolean {
   const comfort = { letter: 'C', alter: 0, octave: 4 } as const;
   if (c.melodyRange && !pitchWindow(key, [0, 0], comfort, comfort, c.melodyRange)) return false;
   if (c.bassRange && !pitchWindow(key, [0, 0], comfort, comfort, c.bassRange)) return false;
@@ -366,7 +369,7 @@ export function canFill(barTicks: number, durations: readonly number[]): boolean
   return ok[barTicks];
 }
 
-const describe = (ticks: readonly number[]) => ticks.map((t) => noteValueFor(t)?.name.split(' (')[0].toLowerCase() ?? `${t}`).join(', ');
+const describe = (ticks: readonly number[]) => ticks.map(lengthName).join(', ');
 
 /**
  * Problems with a combination of settings, found before generating: errors make a piece

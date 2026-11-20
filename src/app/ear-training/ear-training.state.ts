@@ -45,10 +45,6 @@ export class EarTrainingState {
     this.selection.set(dragBars(anchor, bar));
   }
 
-  selectAll(): void {
-    if (this.barCount() > 0) this.selection.set({ from: 0, to: this.barCount() - 1 });
-  }
-
   clearSelection(): void {
     this.selection.set(null);
   }

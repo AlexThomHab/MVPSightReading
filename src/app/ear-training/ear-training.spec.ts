@@ -90,10 +90,9 @@ describe('EarTrainingState', () => {
     expect(state.selectionLabel()).toBe('Bars 13–17');
   });
 
-  it('selects all and clears', () => {
+  it('clears the selection', () => {
     const state = make();
-    state.selectAll();
-    expect(state.selection()).toEqual({ from: 0, to: 31 });
+    state.clickBar(3);
     state.clearSelection();
     expect(state.selection()).toBeNull();
   });

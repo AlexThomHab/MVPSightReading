@@ -8,8 +8,6 @@ import { StyleId } from './styles';
 import { ExtraChord } from './theory';
 
 export type PianoStyleId = Extract<StyleId, 'classical' | 'waltz' | 'minuet' | 'march' | 'folk'>;
-export const PIANO_STYLE_IDS: readonly PianoStyleId[] = ['classical', 'waltz', 'minuet', 'march', 'folk'];
-
 /** Left-hand accompaniment at Grades 4–5. Lower grades use long notes or simple intervals. */
 export type Accompaniment = 'alberti' | 'oompah' | 'walking' | 'march' | 'drone';
 

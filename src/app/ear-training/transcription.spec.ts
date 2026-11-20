@@ -1,3 +1,4 @@
+import { splitTicks } from '../music/durations';
 import { generatePiece } from '../music/generator';
 import { Note } from '../music/model';
 import { keyById, midi } from '../music/theory';
@@ -9,10 +10,8 @@ import {
   emptyTranscription,
   mapPitches,
   nearestLetter,
-  normalise,
   pitchAt,
   setDuration,
-  splitTicks,
   spell,
   step,
   transcriptionPiece,
@@ -53,11 +52,17 @@ describe('transcription: writing notes like MuseScore', () => {
     expect(ticks(t.bars[0].rh)).toBe('4 r4 r8');
   });
 
-  it('ties a note that runs over the bar line into the next bar', () => {
+  it('keeps a note inside its bar (note input checks it fits first)', () => {
     const r = write(emptyTranscription(piece), { bar: 0, staff: 'lh', tick: 12 }, 8, [E4]);
-    expect(ticks(r.transcription.bars[0].lh)).toBe('r12 4~');
-    expect(ticks(r.transcription.bars[1].lh)).toBe('4 r4 r8');
-    expect(r.next).toEqual({ bar: 1, staff: 'lh', tick: 4 });
+    expect(ticks(r.transcription.bars[0].lh)).toBe('r12 4');
+    expect(ticks(r.transcription.bars[1].lh)).toBe('r16');
+    expect(r.next).toEqual({ bar: 1, staff: 'lh', tick: 0 });
+  });
+
+  it('keeps the head of a note it starts inside, tied together, with rests after', () => {
+    let t = write(emptyTranscription(piece), { bar: 0, staff: 'rh', tick: 0 }, 12, [C5]).transcription;
+    t = write(t, { bar: 0, staff: 'rh', tick: 10 }, 1, [E4]).transcription;
+    expect(ticks(t.bars[0].rh)).toBe('8~ 2 1 r1 r4');
   });
 
   it('writes demisemiquavers and dotted values, and rests', () => {
@@ -84,8 +89,7 @@ describe('transcription: writing notes like MuseScore', () => {
   it('ends input at the end of the piece', () => {
     const t = emptyTranscription(piece);
     const last = t.bars.length - 1;
-    expect(normalise(t, { bar: last, staff: 'rh', tick: 16 })).toBeNull();
-    expect(write(t, { bar: last, staff: 'rh', tick: 12 }, 8, [C5]).next).toBeNull();
+    expect(write(t, { bar: last, staff: 'rh', tick: 12 }, 4, [C5]).next).toBeNull();
   });
 });
 
@@ -115,11 +119,14 @@ describe('transcription: editing', () => {
   });
 
   it('deletes a note by turning it into a rest, and drops a tie that no longer leads anywhere', () => {
-    const tied = write(emptyTranscription(piece), { bar: 0, staff: 'rh', tick: 12 }, 8, [C5]).transcription;
-    const t = clearElement(tied, { bar: 1, staff: 'rh', index: 0 });
-    expect(t.bars[1].rh[0].rest).toBe(true);
-    expect(t.bars[0].rh[1].tie).toBeUndefined();
-    expect(clearElement(t, { bar: 1, staff: 'rh', index: 0 })).toBe(t);
+    // A dotted minim cut into a minim tied to a quaver; deleting the quaver leaves the minim untied.
+    let tied = write(emptyTranscription(piece), { bar: 0, staff: 'rh', tick: 0 }, 12, [C5]).transcription;
+    tied = write(tied, { bar: 0, staff: 'rh', tick: 10 }, 2, null).transcription;
+    expect(tied.bars[0].rh[0].tie).toBe(true);
+    const t = clearElement(tied, { bar: 0, staff: 'rh', index: 1 });
+    expect(t.bars[0].rh[1].rest).toBe(true);
+    expect(t.bars[0].rh[0].tie).toBeUndefined();
+    expect(clearElement(t, { bar: 0, staff: 'rh', index: 1 })).toBe(t);
   });
 
   it('moves between elements across bar lines', () => {

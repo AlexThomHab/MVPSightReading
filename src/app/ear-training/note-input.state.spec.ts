@@ -8,18 +8,37 @@ import { NoteInputState } from './note-input.state';
 describe('NoteInputState: MuseScore-style note input', () => {
   let input: NoteInputState;
   let ear: EarTrainingState;
+  let preview: ReturnType<typeof vi.spyOn>;
   const piece = generatePiece({ seed: 'input', grade: 3, style: 'classical', timeId: '4/4' });
   const key = (k: string, o: KeyboardEventInit = {}) => input.handleKey(new KeyboardEvent('keydown', { key: k, ...o }));
   const rh = (bar: number) => input.transcription().bars[bar].rh.map((n) => (n.rest ? `r${n.ticks}` : n.pitches.map((p) => `${p.letter}${p.alter > 0 ? '#' : p.alter < 0 ? 'b' : ''}${p.octave}`).join('+') + `/${n.ticks}${n.tie ? '~' : ''}`));
 
   beforeEach(() => {
+    localStorage.removeItem('note-input-sound');
     TestBed.configureTestingModule({});
     // No audio in tests: the preview sound is a no-op.
-    vi.spyOn(TestBed.inject(PlaybackService), 'preview').mockResolvedValue();
+    preview = vi.spyOn(TestBed.inject(PlaybackService), 'preview').mockResolvedValue();
     input = TestBed.inject(NoteInputState);
     ear = TestBed.inject(EarTrainingState);
     ear.reset(piece.bars.length);
     input.load(piece);
+  });
+
+  it('sounds notes as they are written, unless muted (M), and remembers the choice', () => {
+    expect(input.soundOn()).toBe(true);
+    key('n');
+    key('c');
+    expect(preview).toHaveBeenCalledTimes(1);
+    expect(key('m')).toBe(true);
+    expect(input.soundOn()).toBe(false);
+    key('d');
+    key('ArrowUp');
+    expect(preview).toHaveBeenCalledTimes(1);
+    // Still written, just silent.
+    expect(rh(0).slice(0, 2)).toEqual(['C5/4', 'D#5/4']);
+    expect(localStorage.getItem('note-input-sound')).toBe('off');
+    input.toggleSound();
+    expect(localStorage.getItem('note-input-sound')).toBe('on');
   });
 
   it('toggles note input with N and leaves with Esc, the cursor at the start', () => {

@@ -6,6 +6,7 @@
  */
 import { DynamicMark, Note, Piece } from '../music/model';
 import { midi } from '../music/theory';
+import { totalTicks } from '../music/durations';
 
 export interface PlayOptions {
   /** First bar to play (0-based). Defaults to the first bar. */
@@ -37,7 +38,7 @@ type VoiceName = 's' | 'a' | 't' | 'b' | 'rh' | 'lh';
 
 /** Bar lengths in ticks (a chorale's upbeat and final bar are shorter than the time signature). */
 export function barLengths(piece: Piece): number[] {
-  return piece.bars.map((b) => b.rh.reduce((a, n) => a + n.ticks, 0));
+  return piece.bars.map((b) => totalTicks(b.rh));
 }
 
 export function buildSchedule(piece: Piece, bpm: number, options: PlayOptions = {}): Schedule {
@@ -155,10 +156,10 @@ const LEVEL: Record<DynamicMark, number> = { pp: 0.3, p: 0.4, mp: 0.52, mf: 0.63
  * the next, and a hairpin glides from the level at its start to the next written dynamic
  * (or one step up or down if none follows soon).
  */
-export function dynamicCurve(piece: Piece, barStarts: number[]): (tick: number) => number {
+function dynamicCurve(piece: Piece, barStarts: number[]): (tick: number) => number {
   const expression = piece.expression!;
   const tickOf = (bar: number, index: number) =>
-    barStarts[bar] + piece.bars[bar].rh.slice(0, index).reduce((a, n) => a + n.ticks, 0);
+    barStarts[bar] + totalTicks(piece.bars[bar].rh.slice(0, index));
   const marks = expression.dynamics
     .map((d) => ({ tick: tickOf(d.at.bar, d.at.index), level: LEVEL[d.mark] }))
     .sort((a, b) => a.tick - b.tick);

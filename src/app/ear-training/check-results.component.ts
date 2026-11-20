@@ -3,6 +3,7 @@ import { AnswerCheckState } from './answer-check.state';
 import { EarTrainingState } from './ear-training.state';
 import { NoteInputState } from './note-input.state';
 import { breakdown, staffKey, summarise } from './scoring';
+import type { Staff } from '../music/model';
 
 /**
  * The result of Check Answers: the overall accuracy over the attempted bars, a bar-by-bar
@@ -145,26 +146,9 @@ import { breakdown, staffKey, summarise } from './scoring';
       gap: 6px;
     }
     button {
-      font: inherit;
       height: 30px;
       padding: 0 10px;
       border-radius: 7px;
-      border: 1px solid var(--line-strong);
-      background: var(--paper);
-      color: var(--ink);
-      cursor: pointer;
-      white-space: nowrap;
-    }
-    button:hover:not(:disabled) {
-      border-color: var(--ink);
-    }
-    button:disabled {
-      opacity: 0.45;
-      cursor: default;
-    }
-    button:focus-visible {
-      outline: 2px solid var(--accent);
-      outline-offset: 2px;
     }
     button.primary,
     button.on {
@@ -233,13 +217,6 @@ import { breakdown, staffKey, summarise } from './scoring';
     .dot.missing {
       background: rgb(227 116 0);
     }
-    .visually-hidden {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
-    }
     @media print {
       .results {
         display: none;
@@ -263,7 +240,7 @@ export class CheckResultsComponent {
   private readonly attemptedBars = computed(() => [...new Set((this.check.result()?.staves ?? []).map((s) => s.bar))]);
   protected readonly allAttemptedRevealed = computed(() => this.attemptedBars().every((b) => this.ear.revealed().includes(b)));
 
-  protected isStale(bar: number, staff: 'rh' | 'lh'): boolean {
+  protected isStale(bar: number, staff: Staff): boolean {
     return this.check.stale().has(staffKey(bar, staff));
   }
 

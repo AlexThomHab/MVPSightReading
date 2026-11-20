@@ -14,6 +14,7 @@ import { GRADE_SPECS, Grade } from './grades';
 import type { Note, Piece, Settings } from './model';
 import { StyleId } from './styles';
 import { keySignatureAlter, midi, pitchName } from './theory';
+import { onsets } from './durations';
 
 const PIANO: StyleId[] = ['classical', 'waltz', 'minuet', 'march', 'folk', 'chopin'];
 
@@ -33,7 +34,6 @@ function sample(base: Omit<Settings, 'seed'>, count = 12): { pieces: Piece[]; er
 
 const notesOf = (p: Piece, hand: 'rh' | 'lh'): Note[] => p.bars.flatMap((b) => (b.voices ? (hand === 'rh' ? b.voices.s : b.voices.b) : b[hand]));
 const melody = (p: Piece) => notesOf(p, 'rh').filter((n) => !n.rest);
-const onsets = (ns: Note[]) => ns.reduce<number[]>((acc, _, i) => [...acc, i ? acc[i - 1] + ns[i - 1].ticks : 0], []);
 
 describe('customisation: settings and validation', () => {
   it('keeps the grade default for anything not customised, and the user’s choice for anything that is', () => {

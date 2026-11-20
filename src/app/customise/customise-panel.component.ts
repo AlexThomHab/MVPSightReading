@@ -7,7 +7,6 @@ import {
   INTERVAL_NAMES,
   MAX_INTERVAL,
   NOTE_VALUES,
-  NoteValue,
   NoteValueId,
   PitchRangeSetting,
   RhythmicDifficulty,
@@ -18,18 +17,13 @@ import {
 } from '../music/constraints';
 import { GRADE_SPECS, Grade, TIME_SIGNATURES, TimeSignatureId } from '../music/grades';
 import { StyleId } from '../music/styles';
+import { valueOf } from '../music/durations';
 import { loadVexFlow } from '../score/engraving';
+import { DOT, NOTE, REST, timeDigits } from '../score/glyphs';
 import { PitchRangeComponent } from './pitch-range.component';
 
 type Area = ConstraintIssue['area'];
 type Toggle = 'accidentals' | 'dynamics' | 'staccato' | 'accents' | 'tenuto' | 'slurs' | 'ornaments' | 'syncopation' | 'ties';
-
-/** SMuFL (Bravura) glyphs: each note value as a note and as a rest, and a dot for dotted values. */
-const NOTE_GLYPH: Record<number, string> = { 16: '', 8: '', 4: '', 2: '', 1: '' };
-const REST_GLYPH: Record<number, string> = { 16: '', 8: '', 4: '', 2: '', 1: '' };
-const DOT = '';
-/** Time-signature digits 0–9 (SMuFL timeSig0…timeSig9). */
-const timeDigits = (n: number) => [...String(n)].map((d) => String.fromCodePoint(0xe080 + Number(d))).join('');
 
 interface Tile {
   id: NoteValueId;
@@ -39,10 +33,10 @@ interface Tile {
   dotted: boolean;
 }
 
-function tilesFor(glyphs: Record<number, string>): Tile[] {
-  return NOTE_VALUES.map((v: NoteValue) => {
-    const dotted = !glyphs[v.ticks];
-    return { id: v.id, name: v.name, ticks: v.ticks, glyph: glyphs[dotted ? (v.ticks * 2) / 3 : v.ticks], dotted };
+function tilesFor(glyphs: Readonly<Record<number, string>>): Tile[] {
+  return NOTE_VALUES.map((v) => {
+    const { base, dotted } = valueOf(v.ticks)!;
+    return { id: v.id, name: v.name, ticks: v.ticks, glyph: glyphs[base], dotted };
   });
 }
 
@@ -84,8 +78,8 @@ export class CustomisePanelComponent {
   readonly apply = output<void>();
   readonly closed = output<void>();
 
-  protected readonly noteTiles = tilesFor(NOTE_GLYPH);
-  protected readonly restTiles = tilesFor(REST_GLYPH);
+  protected readonly noteTiles = tilesFor(NOTE);
+  protected readonly restTiles = tilesFor(REST);
   protected readonly dot = DOT;
   protected readonly timeChips = (Object.keys(TIME_SIGNATURES) as TimeSignatureId[]).map((id) => ({
     id,

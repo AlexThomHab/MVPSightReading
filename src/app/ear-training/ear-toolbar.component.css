@@ -23,12 +23,22 @@
   padding: 0 14px;
 }
 
-.group:first-child {
+/*
+ * A fixed layout, whatever the Play button says: the writing tools fill the first row; Play
+ * and its options start the second, with Check and Reveal kept at its right-hand end.
+ */
+.group.write {
+  flex-basis: 100%;
+  padding: 0;
+}
+
+.group.listen {
   padding-left: 0;
 }
 
-/* Groups are told apart by a quiet rule rather than headings. */
-.group + .group {
+.group.check-group {
+  margin-left: auto;
+  padding-right: 0;
   border-left: 1px solid var(--line);
 }
 
@@ -37,35 +47,26 @@
   gap: 2px;
 }
 
-button,
-summary.button,
-summary.icon {
-  font: inherit;
+/* Slightly smaller controls than the main toolbar; the menus' summaries look like buttons. */
+button {
   height: 34px;
   padding: 0 10px;
   border-radius: 7px;
+}
+
+summary.button,
+summary.icon {
+  height: 34px;
+  padding: 0 10px;
   border: 1px solid var(--line-strong);
+  border-radius: 7px;
   background: var(--paper);
-  color: var(--ink);
   cursor: pointer;
   white-space: nowrap;
 }
 
-button:hover:not(:disabled),
 summary:hover {
   border-color: var(--ink);
-}
-
-button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-button:focus-visible,
-summary:focus-visible,
-input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 
 button.icon,
@@ -87,7 +88,8 @@ summary.icon {
 }
 
 .play {
-  min-width: 11.5em;
+  /* Wide enough for "Play the whole piece", so the label changing moves nothing. */
+  min-width: 13em;
   font-weight: 600;
   background: var(--accent);
   border-color: var(--accent);
@@ -113,6 +115,22 @@ button.link {
   color: var(--accent);
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+button.link:disabled {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+/* Writing in silence: the speaker shown crossed out, and quieter. */
+.sound {
+  display: inline-grid;
+  place-items: center;
+}
+
+.sound.muted {
+  color: var(--muted);
+  background: var(--panel);
 }
 
 /* Notation tiles in Bravura. */
@@ -149,26 +167,9 @@ button.link {
 }
 
 /* Original / My notes. */
-.segmented {
-  display: inline-flex;
-  border: 1px solid var(--line-strong);
-  border-radius: 7px;
-  overflow: hidden;
-}
-
 .segmented button {
   height: 32px;
-  border: 0;
   border-radius: 0;
-}
-
-.segmented button + button {
-  border-left: 1px solid var(--line-strong);
-}
-
-.segmented button.selected {
-  background: var(--ink);
-  color: var(--paper);
 }
 
 /* Small menus: playback options, reveal, more. */
@@ -309,6 +310,10 @@ button.link {
     border-left: 0;
     border-top: 1px solid var(--line);
     padding-top: 10px;
+  }
+
+  .group.check-group {
+    margin-left: 0;
   }
 
   .play {

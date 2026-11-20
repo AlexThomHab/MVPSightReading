@@ -4,7 +4,7 @@
  */
 
 /** Hashes any string to a 32-bit unsigned integer (cyrb53, folded to 32 bits). */
-export function hashSeed(seed: string): number {
+function hashSeed(seed: string): number {
   let h1 = 0xdeadbeef;
   let h2 = 0x41c6ce57;
   for (let i = 0; i < seed.length; i++) {

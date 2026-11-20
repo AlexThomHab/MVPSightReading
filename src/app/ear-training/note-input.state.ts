@@ -4,7 +4,7 @@ import { LETTERS, Letter, Pitch } from '../music/theory';
 import { PlaybackService } from '../playback/playback.service';
 import type { InputTarget } from '../score/hit-test';
 import { EarTrainingState } from './ear-training.state';
-import { lengthName } from './scoring';
+import { lengthName, onsets } from '../music/durations';
 import {
   ElementRef,
   Position,
@@ -17,7 +17,6 @@ import {
   emptyTranscription,
   indexAt,
   mapPitches,
-  onsets,
   nearestLetter,
   pitchAt,
   positionOf,
@@ -44,6 +43,16 @@ const keyOf = (bar: number, staff: Staff) => `${bar}:${staff}`;
 export const DURATION_KEYS: Readonly<Record<string, number>> = { '2': 0.5, '3': 1, '4': 2, '5': 4, '6': 8, '7': 16 };
 
 const HISTORY_LIMIT = 200;
+const SOUND_KEY = 'note-input-sound';
+
+/** The listener's choice to hear notes as they write them (on unless they turned it off). */
+function soundPreference(): boolean {
+  try {
+    return localStorage.getItem(SOUND_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+}
 
 /**
  * Note input for Ear Training, modelled on MuseScore: N starts and Esc ends note input; the
@@ -64,9 +73,16 @@ export class NoteInputState {
   readonly dotted = signal(false);
   /** Clicks (and letters) write rests instead of notes. */
   readonly restMode = signal(false);
+  /**
+   * Hear each note as it is written or changed. Off, the listener writes by ear alone — a
+   * harder test. Playback is not affected; the choice is remembered between visits.
+   */
+  readonly soundOn = signal(soundPreference());
   readonly ticks = computed(() => this.base() * (this.dotted() ? 1.5 : 1));
   /** A short note when something cannot be done (shown briefly, and read out). */
   readonly message = signal('');
+  /** Whether the message says something could not be done (shown as a warning), or just confirms. */
+  readonly messageIsWarning = signal(false);
   private messageTimer: ReturnType<typeof setTimeout> | undefined;
 
   /** The piece being transcribed. */
@@ -352,6 +368,10 @@ export class NoteInputState {
       return false;
     }
     if (e.altKey) return false;
+    if (key === 'm' || key === 'M') {
+      this.toggleSound();
+      return true;
+    }
     if (key === 'n' || key === 'N') {
       this.toggle();
       return true;
@@ -415,9 +435,10 @@ export class NoteInputState {
   }
 
   /** Shows a short message for a few seconds. */
-  say(text: string): void {
+  say(text: string, warning = true): void {
     clearTimeout(this.messageTimer);
     this.message.set(text);
+    this.messageIsWarning.set(warning);
     this.messageTimer = setTimeout(() => this.message.set(''), 3500);
   }
 
@@ -428,8 +449,18 @@ export class NoteInputState {
     return n && !n.rest ? n.pitches[n.pitches.length - 1] : null;
   }
 
-  /** MuseScore sounds each note as it is written or changed. */
+  toggleSound(): void {
+    this.soundOn.update((on) => !on);
+    this.say(this.soundOn() ? 'Notes sound as you write them.' : 'Notes are silent as you write them — Play to hear your notes.', false);
+    try {
+      localStorage.setItem(SOUND_KEY, this.soundOn() ? 'on' : 'off');
+    } catch {
+      // (Storage unavailable: the choice lasts for this visit.)
+    }
+  }
+
+  /** MuseScore sounds each note as it is written or changed (unless the listener has muted that). */
   private sound(pitches: readonly Pitch[]): void {
-    if (pitches.length) void this.playback.preview(pitches);
+    if (pitches.length && this.soundOn()) void this.playback.preview(pitches);
   }
 }

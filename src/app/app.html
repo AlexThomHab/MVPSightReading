@@ -153,7 +153,6 @@
     [activeBar]="playback.currentBar()"
     [concealed]="ear.active()"
     [revealed]="ear.revealed()"
-    [showTempo]="!ear.active()"
     [selection]="ear.active() ? ear.selection() : null"
     (barClick)="ear.clickBar($event)"
     (barDrag)="ear.dragBars($event.anchor, $event.bar)"
@@ -166,18 +165,3 @@
     (inputClick)="input.clickAt($event.target, $event.chord)"
   />
 </main>
-
-@if (!ear.active()) {
-<section class="analysis" aria-label="Phrase analysis">
-  <h3>Analysis</h3>
-  <ol>
-    @for (ph of analysis(); track ph.bars) {
-      <li>
-        <span class="analysis-bars">{{ ph.bars }}</span>
-        <span>{{ ph.detail.join(' · ') }}</span>
-        <span class="analysis-chords">{{ ph.chords }}</span>
-      </li>
-    }
-  </ol>
-</section>
-}

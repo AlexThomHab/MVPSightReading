@@ -2,18 +2,14 @@ import { ChangeDetectionStrategy, Component, ElementRef, computed, inject, outpu
 import { PlaybackService } from '../playback/playback.service';
 import { AnswerCheckState } from './answer-check.state';
 import { EarTrainingState } from './ear-training.state';
-import { NoteInputState } from './note-input.state';
-import { lengthName } from './scoring';
+import { fullName, lengthName } from '../music/durations';
+import { ACCIDENTAL, DOT, NOTE, REST } from '../score/glyphs';
+import { DURATION_KEYS, NoteInputState } from './note-input.state';
 
-/** The note values on the toolbar, as SMuFL (Bravura) notes, with MuseScore's shortcut keys. */
-const DURATIONS = [
-  { ticks: 16, glyph: '', name: 'Whole note (semibreve)', key: '7' },
-  { ticks: 8, glyph: '', name: 'Half note (minim)', key: '6' },
-  { ticks: 4, glyph: '', name: 'Quarter note (crotchet)', key: '5' },
-  { ticks: 2, glyph: '', name: 'Eighth note (quaver)', key: '4' },
-  { ticks: 1, glyph: '', name: 'Sixteenth note (semiquaver)', key: '3' },
-  { ticks: 0.5, glyph: '', name: 'Thirty-second note (demisemiquaver)', key: '2' },
-];
+/** The note values on the toolbar, longest first, with MuseScore's shortcut keys. */
+const DURATIONS = Object.entries(DURATION_KEYS)
+  .map(([key, ticks]) => ({ ticks, key, glyph: NOTE[ticks], name: fullName(ticks) }))
+  .sort((a, b) => b.ticks - a.ticks);
 
 /** Every shortcut, for the Shortcuts popover. */
 const SHORTCUTS: [string, string][] = [
@@ -28,6 +24,7 @@ const SHORTCUTS: [string, string][] = [
   ['Delete', 'Turn the selected note into a rest'],
   ['Ctrl/⌘ + Z · Ctrl + Y', 'Undo · redo'],
   ['Space', 'Play or pause'],
+  ['M', 'Hear notes as you write them, or not'],
   ['Esc', 'Stop writing, or deselect'],
 ];
 
@@ -52,7 +49,7 @@ export class EarToolbarComponent {
 
   protected readonly durations = DURATIONS;
   protected readonly shortcuts = SHORTCUTS;
-  protected readonly glyph = { dot: '', rest: '', flat: '', natural: '', sharp: '' };
+  protected readonly glyph = { dot: DOT, rest: REST[4], ...ACCIDENTAL };
   protected readonly showShortcuts = signal(false);
 
   /** Play, pause or resume the selected bars (the app decides what plays). */
@@ -76,7 +73,7 @@ export class EarToolbarComponent {
   /** One line of help for what the listener is doing now (or why something did not happen). */
   protected readonly hint = computed(() => {
     const message = this.input.message();
-    if (message) return { text: message, warning: true };
+    if (message) return { text: message, warning: this.input.messageIsWarning() };
     if (this.input.active()) {
       const what = this.input.restMode() ? `${lengthName(this.input.ticks())} rest` : lengthName(this.input.ticks());
       return { text: `Click the stave to place a ${what}, or type A–G. Press Esc when you're done.`, warning: false };

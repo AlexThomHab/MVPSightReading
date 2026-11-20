@@ -26,7 +26,7 @@ function cell(ticks: number[], unit: number, minGrade: Grade, syncopated = false
 }
 
 /** Building blocks for simple time (unit = crotchet, 4 ticks). */
-export const SIMPLE_CELLS: readonly RhythmCell[] = [
+const SIMPLE_CELLS: readonly RhythmCell[] = [
   cell([4], 4, 1),
   cell([8], 4, 1),
   cell([12], 4, 1),
@@ -46,7 +46,7 @@ export const SIMPLE_CELLS: readonly RhythmCell[] = [
 const SYNCOPATED_CELLS: readonly RhythmCell[] = [cell([2, 4, 2], 4, 2, true), cell([4, 8, 4], 4, 2, true)];
 
 /** Building blocks for compound time and 3/8 (unit = dotted crotchet, 6 ticks). */
-export const COMPOUND_CELLS: readonly RhythmCell[] = [
+const COMPOUND_CELLS: readonly RhythmCell[] = [
   cell([6], 6, 3),
   cell([12], 6, 3),
   cell([4, 2], 6, 3),
