@@ -9,9 +9,8 @@ import { BarSelection, clickBar, describeSelection, dragBars, nextReveal, playRa
 export class EarTrainingState {
   readonly active = signal(false);
 
-  // Hints: off by default so nothing is given away; kept when a new piece is generated.
-  readonly showKey = signal(false);
-  readonly showTime = signal(false);
+  /** What Play plays: the original (the exercise) or the listener's own notes. */
+  readonly source = signal<'original' | 'mine'>('original');
 
   /** The selected passage — always continuous — or null for none. */
   readonly selection = signal<BarSelection | null>(null);
@@ -60,6 +59,13 @@ export class EarTrainingState {
     if (!s) return;
     this.revealed.update((r) => withRevealed(r, ...Array.from({ length: s.to - s.from + 1 }, (_, i) => s.from + i)));
     this.cursor.set(s.to);
+  }
+
+  /** Reveals particular bars (e.g. the ones just checked). */
+  reveal(bars: readonly number[]): void {
+    if (!bars.length) return;
+    this.revealed.update((r) => withRevealed(r, ...bars));
+    this.cursor.set(Math.max(...bars));
   }
 
   revealNext(): void {

@@ -1,6 +1,18 @@
 <header class="site-header">
-  <h1>Sight-reading generator</h1>
-  <p class="tagline">A new piano piece for Grades 1–5, every time.</p>
+  <div class="brand">
+    <h1>Sight-Reading Generator</h1>
+    <p class="tagline">Generate, practise and improve your musical reading skills.</p>
+  </div>
+  <div class="mode-switch" role="radiogroup" aria-label="Activity">
+    <button type="button" role="radio" [attr.aria-checked]="!ear.active()" [class.selected]="!ear.active()" (click)="setMode('reading')">
+      <span class="mode-name">Sight reading</span>
+      <span class="mode-desc">Read and play a new piece</span>
+    </button>
+    <button type="button" role="radio" [attr.aria-checked]="ear.active()" [class.selected]="ear.active()" (click)="setMode('ear')">
+      <span class="mode-name">Ear training</span>
+      <span class="mode-desc">Listen and write it down</span>
+    </button>
+  </div>
 </header>
 
 <section class="toolbar" aria-label="Piece settings">
@@ -52,20 +64,19 @@
 
   <div class="actions">
     <button type="button" class="primary" (click)="newPiece()">New piece</button>
-    <button
-      type="button"
-      (click)="togglePlay()"
-      [attr.aria-pressed]="playback.playing()"
-    >
-      @if (playback.loading()) {
-        Loading piano…
-      } @else if (playback.playing()) {
-        ■ Stop
-      } @else {
-        ▶ Play
-      }
-    </button>
-    <button type="button" (click)="print()">Print</button>
+    @if (!ear.active()) {
+      <!-- (Ear Training has its own Play, for the selected bars.) -->
+      <button type="button" (click)="togglePlay()" [attr.aria-pressed]="playback.playing()" title="Play or stop — Space">
+        @if (playback.loading()) {
+          Loading piano…
+        } @else if (playback.playing()) {
+          ■ Stop
+        } @else {
+          ▶ Play
+        }
+      </button>
+      <button type="button" (click)="print()">Print</button>
+    }
     <button
       type="button"
       class="customise-toggle"
@@ -77,9 +88,6 @@
       @if (isCustomised()) {
         <span class="dot" aria-label="(customised)"></span>
       }
-    </button>
-    <button type="button" (click)="toggleEarTraining()" [attr.aria-pressed]="ear.active()">
-      {{ ear.active() ? 'Exit ear training' : 'Ear training' }}
     </button>
   </div>
 
@@ -121,7 +129,8 @@
 }
 
 @if (ear.active()) {
-  <app-ear-toolbar (togglePlay)="togglePlay()" (playMine)="playMine()" />
+  <app-ear-toolbar (togglePlay)="togglePlay()" />
+  <app-check-results />
   @if (pendingSettings()) {
     <p class="notice">Your new settings will be used when you click New piece.</p>
   }
@@ -133,7 +142,7 @@
 
 <main class="sheet">
   <header class="sheet-header">
-    <h2>{{ sheetTitle() }}</h2>
+    <h2>{{ piece().title }}</h2>
     <p class="sheet-meta">
       <span>{{ subtitle() }}</span>
       <span class="seed">Seed {{ piece().seed }}</span>
@@ -144,13 +153,15 @@
     [activeBar]="playback.currentBar()"
     [concealed]="ear.active()"
     [revealed]="ear.revealed()"
-    [showKey]="!ear.active() || ear.showKey()"
-    [showTime]="!ear.active() || ear.showTime()"
     [showTempo]="!ear.active()"
     [selection]="ear.active() ? ear.selection() : null"
     (barClick)="ear.clickBar($event)"
     (barDrag)="ear.dragBars($event.anchor, $event.bar)"
     [noteInput]="noteInputView()"
+    [marks]="ear.active() ? check.marks() : undefined"
+    [feedback]="check.feedback()"
+    [missing]="ear.active() ? check.missing() : []"
+    [wrong]="ear.active() ? check.wrongNotes() : []"
     (noteClick)="input.select($event)"
     (inputClick)="input.clickAt($event.target, $event.chord)"
   />

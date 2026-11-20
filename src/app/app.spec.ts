@@ -14,7 +14,7 @@ describe('App', () => {
     const fixture = TestBed.createComponent(App);
     await fixture.whenStable();
     const el = fixture.nativeElement as HTMLElement;
-    expect(el.querySelector('h1')?.textContent).toContain('Sight-reading generator');
+    expect(el.querySelector('h1')?.textContent).toContain('Sight-Reading Generator');
     expect(el.querySelector('.sheet h2')?.textContent).toMatch(/^Waltz in /);
     expect(el.querySelector('.sheet-meta')?.textContent).toContain('Grade 2');
     expect(el.querySelector('.seed')?.textContent).toContain('spec');
@@ -69,6 +69,7 @@ describe('App', () => {
       s.dispatchEvent(new Event('change'));
       await fixture.whenStable();
     };
+    const revealed = () => el.querySelector('app-ear-toolbar .count')!.textContent!.trim();
 
     beforeEach(async () => {
       history.replaceState(null, '', '/?seed=spec&grade=3&style=folk&key=G&time=3/4');
@@ -77,83 +78,96 @@ describe('App', () => {
       el = fixture.nativeElement;
     });
 
-    it('keeps the generator controls and adds the ear-training toolbar, without regenerating', async () => {
-      const subtitle = el.querySelector('.sheet-meta')!.textContent;
+    it('switches activity from the header, keeping the piece and the generator controls', async () => {
+      const subtitle = el.querySelector('.sheet-meta')!.textContent!;
+      const modes = el.querySelectorAll('.mode-switch [role=radio]');
+      expect([...modes].map((m) => m.getAttribute('aria-checked'))).toEqual(['true', 'false']);
       await press('Ear training');
-      expect(el.querySelector('.toolbar')).not.toBeNull();
+      expect([...modes].map((m) => m.getAttribute('aria-checked'))).toEqual(['false', 'true']);
+      expect(button('Exit ear training')).toBeUndefined();
       expect(el.querySelectorAll('.toolbar select').length).toBe(3);
-      for (const label of ['New piece', '▶ Play', 'Print', 'Exit ear training']) expect(button(label), label).toBeDefined();
-      expect(el.querySelectorAll('input[type=range]').length).toBe(1); // one tempo control
-      expect(el.querySelector('app-ear-toolbar')).not.toBeNull();
-      // The ear toolbar sits between the generator controls and the score.
+      expect(button('New piece')).toBeDefined();
+      // Ear Training has one Play (for the selected bars) and nothing to print.
+      expect(el.querySelector('.toolbar')!.textContent).not.toContain('Print');
+      expect(el.querySelectorAll('input[type=range]').length).toBe(1);
       const order = [...el.querySelectorAll('.toolbar, app-ear-toolbar, .sheet')].map((n) => n.className || n.tagName);
       expect(order).toEqual(['toolbar', 'APP-EAR-TOOLBAR', 'sheet']);
       expect(el.querySelector('.analysis')).toBeNull();
       expect(seed()).toBe('spec');
 
-      await press('Exit ear training');
+      await press('Sight reading');
       expect(el.querySelector('app-ear-toolbar')).toBeNull();
       expect(el.querySelector('.analysis')).not.toBeNull();
       expect(el.querySelector('.sheet-meta')!.textContent).toBe(subtitle);
       expect(seed()).toBe('spec');
     });
 
-    it('has no playback-scope or bar-number controls: bars are chosen on the score', async () => {
+    it('always shows the key and time signature (no hint switches)', async () => {
       await press('Ear training');
-      for (const gone of ['Full piece', 'Single bar', 'Bar range']) expect(button(gone), gone).toBeUndefined();
-      expect(el.querySelectorAll('app-ear-toolbar input[type=number]').length).toBe(0);
-      for (const label of ['Select all', 'Clear selection', '▶ Play', 'Pause']) expect(button(label), label).toBeDefined();
-      for (const label of ['Repeat selection', 'Count-in']) expect(el.querySelector('app-ear-toolbar')!.textContent).toContain(label);
+      expect(el.textContent).not.toContain('Show key');
+      expect(el.textContent).not.toContain('Show time signature');
+      const meta = el.querySelector('.sheet')!.textContent!;
+      expect(meta).toContain('G major');
+      expect(meta).toContain('3/4');
     });
 
-    it('plays the whole piece with nothing selected, and just the selected passage otherwise', async () => {
+    it('plays the selected bars from one Play button that says what it will play', async () => {
       const playback = TestBed.inject(PlaybackService);
       const ear = TestBed.inject(EarTrainingState);
       const play = vi.spyOn(playback, 'play').mockResolvedValue();
       await press('Ear training');
+      expect(button('Play my notes')).toBeUndefined();
       const lastBar = ear.barCount() - 1;
-      await press('▶ Play');
+      await press('▶ Play the whole piece');
       expect(play.mock.calls[0][2]).toEqual({ fromBar: 0, toBar: lastBar, loop: false, countIn: true });
 
       // Click bar 3, then bar 6: bars 3–6.
       ear.clickBar(2);
       ear.clickBar(5);
       await fixture.whenStable();
-      expect(el.querySelector('app-ear-toolbar')!.textContent).toContain('Bars 3–6');
-      // The main toolbar's Play and the ear toolbar's Play do the same thing.
-      el.querySelector<HTMLButtonElement>('.toolbar button[aria-pressed]')!.click();
-      expect(play.mock.calls[1][2]).toEqual({ fromBar: 2, toBar: 5, loop: false, countIn: true });
+      await toggle('Repeat');
+      await toggle('Count in');
+      await press('▶ Play bars 3–6');
+      expect(play.mock.calls[1][2]).toEqual({ fromBar: 2, toBar: 5, loop: true, countIn: false });
 
-      await toggle('Repeat selection');
-      await toggle('Count-in');
-      await press('▶ Play');
-      expect(play.mock.calls[2][2]).toEqual({ fromBar: 2, toBar: 5, loop: true, countIn: false });
-
+      // Space plays too; Clear selection goes back to the whole piece.
       await press('Clear selection');
-      await press('▶ Play');
-      expect(play.mock.calls[3][2]).toMatchObject({ fromBar: 0, toBar: lastBar });
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
+      expect(play.mock.calls[2][2]).toMatchObject({ fromBar: 0, toBar: lastBar });
     });
 
-    it('hides the key and time signature from labels until each hint is turned on', async () => {
+    it('pauses and resumes while playing', async () => {
+      const playback = TestBed.inject(PlaybackService);
       await press('Ear training');
-      const meta = () => el.querySelector('.sheet')!.textContent!;
-      expect(meta()).not.toContain('G major');
-      expect(meta()).not.toContain('3/4');
-      expect(el.querySelector('.toolbar .tempo')!.textContent).not.toContain('♩');
-      await toggle('Show key');
-      expect(meta()).toContain('G major');
-      expect(meta()).not.toContain('3/4');
-      await toggle('Show time signature');
-      expect(meta()).toContain('3/4');
-      await toggle('Show key');
-      expect(meta()).not.toContain('G major');
-      expect(meta()).toContain('3/4');
+      const pause = vi.spyOn(playback, 'pause').mockImplementation(() => playback.paused.set(true));
+      const resume = vi.spyOn(playback, 'resume').mockImplementation(() => playback.paused.set(false));
+      playback.playing.set(true);
+      await fixture.whenStable();
+      await press('❚❚ Pause');
+      expect(pause).toHaveBeenCalled();
+      await press('▶ Resume');
+      expect(resume).toHaveBeenCalled();
+      playback.playing.set(false);
+    });
+
+    it('plays the listener’s own notes when My notes is chosen', async () => {
+      const playback = TestBed.inject(PlaybackService);
+      const play = vi.spyOn(playback, 'play').mockResolvedValue();
+      await press('Ear training');
+      await press('My notes');
+      await press('▶ Play');
+      // Nothing written yet: every bar of what plays is rests.
+      expect(play.mock.calls[0][0].bars.every((b) => b.rh.every((n) => n.rest))).toBe(true);
+      await press('Original');
+      await press('▶ Play');
+      expect(play.mock.calls[1][0].bars.some((b) => b.rh.some((n) => !n.rest))).toBe(true);
     });
 
     it('applies new settings only on New piece, then stays in the mode with everything concealed again', async () => {
       await press('Ear training');
       await press('Reveal all');
-      expect(el.textContent).toMatch(/(\d+) of \1 revealed/);
+      const [shown, total] = revealed().split('/');
+      expect(shown).toBe(total);
 
       await select(0, 'classical'); // style
       expect(seed()).toBe('spec');
@@ -164,35 +178,33 @@ describe('App', () => {
       expect(seed()).not.toBe('spec');
       expect(new URLSearchParams(location.search).get('style')).toBe('classical');
       expect(el.querySelector('app-ear-toolbar')).not.toBeNull();
-      expect(el.textContent).toMatch(/0 of \d+ revealed/);
+      expect(revealed().startsWith('0/')).toBe(true);
       expect(el.textContent).not.toContain('will be used when you click New piece');
     });
 
-    it('drops unapplied setting changes when leaving, so the piece stays the same', async () => {
+    it('drops unapplied setting changes when switching back to sight reading, so the piece stays the same', async () => {
       await press('Ear training');
       await select(0, 'march');
-      await press('Exit ear training');
+      await press('Sight reading');
       expect(seed()).toBe('spec');
       expect(new URLSearchParams(location.search).get('style')).toBe('folk');
       expect(el.querySelectorAll<HTMLSelectElement>('.toolbar select')[0].value).toBe('folk');
     });
 
-    it('reveals the selected passage, then the next bar, without changing the selection', async () => {
+    it('reveals the selected bars, then the next bar, without changing the selection', async () => {
       const ear = TestBed.inject(EarTrainingState);
       await press('Ear training');
-      expect(button('Reveal selected').disabled).toBe(true);
+      expect(button('Reveal selected bars').disabled).toBe(true);
       ear.clickBar(2);
       ear.clickBar(4);
       await fixture.whenStable();
-      await press('Reveal selected');
-      expect(el.textContent).toMatch(/3 of \d+ revealed/);
+      await press('Reveal bars 3–5');
+      expect(revealed().startsWith('3/')).toBe(true);
       await press('Reveal next bar (6)');
-      expect(el.textContent).toMatch(/4 of \d+ revealed/);
+      expect(revealed().startsWith('4/')).toBe(true);
       expect(ear.selection()).toEqual({ from: 2, to: 4 });
-      await press('Select all');
-      expect(el.querySelector('app-ear-toolbar')!.textContent).toContain(`Bars 1–${ear.barCount()}`);
-      await press('Reset reveals');
-      expect(el.textContent).toMatch(/0 of \d+ revealed/);
+      await press('Hide all again');
+      expect(revealed().startsWith('0/')).toBe(true);
     });
   });
 

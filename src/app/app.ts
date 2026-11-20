@@ -8,6 +8,8 @@ import { freshSeed } from './music/random';
 import { STYLES, STYLE_IDS, StyleId, isStyleId, keysFor, timesFor } from './music/styles';
 import { Key, keyById, keyName } from './music/theory';
 import { CustomisePanelComponent } from './customise/customise-panel.component';
+import { AnswerCheckState } from './ear-training/answer-check.state';
+import { CheckResultsComponent } from './ear-training/check-results.component';
 import { EarToolbarComponent } from './ear-training/ear-toolbar.component';
 import { EarTrainingState } from './ear-training/ear-training.state';
 import { NoteInputState } from './ear-training/note-input.state';
@@ -74,7 +76,7 @@ function attempt(settings: Settings): Attempt {
 
 @Component({
   selector: 'app-root',
-  imports: [ScoreComponent, EarToolbarComponent, CustomisePanelComponent],
+  imports: [ScoreComponent, EarToolbarComponent, CheckResultsComponent, CustomisePanelComponent],
   templateUrl: './app.html',
   styleUrl: './app.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -87,6 +89,8 @@ export class App {
   protected readonly ear = inject(EarTrainingState);
   /** Ear Training's note input: the listener's own notes in the hidden bars. */
   protected readonly input = inject(NoteInputState);
+  /** Check Answers: the listener's notes marked against the original. */
+  protected readonly check = inject(AnswerCheckState);
 
   protected readonly grades = GRADES;
   protected readonly styles = STYLE_IDS.map((id) => STYLES[id]);
@@ -170,25 +174,9 @@ export class App {
     return { min: Math.round(bpm * 0.5), max: Math.round(bpm * 1.5) };
   });
 
-  /** In Ear Training mode the title and subtitle leave out whatever the hints hide. */
-  protected readonly sheetTitle = computed(() => {
-    const p = this.piece();
-    if (!this.ear.active() || this.ear.showKey()) return p.title;
-    // "Nocturne in E♭ minor" → "Nocturne": the title without its key.
-    return p.title.replace(/ in [A-G].*$/, '');
-  });
-
   protected readonly subtitle = computed(() => {
     const p = this.piece();
-    const showKey = !this.ear.active() || this.ear.showKey();
-    const showTime = !this.ear.active() || this.ear.showTime();
-    return [
-      `Grade ${p.grade}`,
-      STYLES[p.style].name,
-      showKey ? keyName(p.key) : '',
-      showTime ? p.time.id : '',
-      this.ear.active() ? `${p.bars.length} bars` : '',
-    ]
+    return [`Grade ${p.grade}`, STYLES[p.style].name, keyName(p.key), p.time.id, this.ear.active() ? `${p.bars.length} bars` : '']
       .filter(Boolean)
       .join(' · ');
   });
@@ -196,16 +184,10 @@ export class App {
   /** Phrase-by-phrase analysis for teachers: bars, any sequence, and the cadence. */
   protected readonly analysis = computed(() => describePhrases(this.piece()));
 
-  protected readonly beatLabel = computed(() => {
-    // A dotted crotchet would give away compound time while the time signature is hidden.
-    if (this.ear.active() && !this.ear.showTime()) return '';
+  protected readonly tempoLabel = computed(() => {
     const unit = this.piece().tempo.beatUnit;
-    return unit === 'qd' ? '♩.' : unit === '8' ? '♪' : '♩';
+    return `Tempo ${unit === 'qd' ? '♩.' : unit === '8' ? '♪' : '♩'} = ${this.bpm()}`;
   });
-
-  protected readonly tempoLabel = computed(() =>
-    this.beatLabel() ? `Tempo ${this.beatLabel()} = ${this.bpm()}` : `Tempo ${this.bpm()} bpm`,
-  );
 
   constructor() {
     // Keep the URL in step with the settings, so the address bar always shares this piece.
@@ -232,11 +214,14 @@ export class App {
         this.playback.stop();
         this.ear.reset(piece.bars.length);
         this.input.load(piece);
+        this.check.reset();
       });
     });
   }
 
-  protected toggleEarTraining(): void {
+  /** Switches activity. The piece, the listener's notes and what is revealed carry over. */
+  protected setMode(mode: 'reading' | 'ear'): void {
+    if ((mode === 'ear') === this.ear.active()) return;
     this.playback.stop();
     if (this.ear.active()) {
       // Back to the fully visible score of the same piece: drop any control changes that
@@ -250,7 +235,6 @@ export class App {
       this.input.exit();
       this.ear.active.set(false);
     } else {
-      this.ear.reset(this.piece().bars.length);
       this.ear.active.set(true);
     }
   }
@@ -288,18 +272,28 @@ export class App {
     this.bpm.set(Number(value));
   }
 
+  /**
+   * Play. Sight reading: the whole piece, or stop. Ear Training: the selected bars (or the whole
+   * piece), of the original or of the listener's notes — and while playing, pause or resume.
+   */
   protected togglePlay(): void {
-    if (this.playback.playing() || this.playback.loading()) {
+    if (this.playback.loading()) {
       this.playback.stop();
       return;
     }
     if (!this.ear.active()) {
-      void this.playback.play(this.piece(), this.bpm());
+      if (this.playback.playing()) this.playback.stop();
+      else void this.playback.play(this.piece(), this.bpm());
       return;
     }
-    // Ear Training: play the selected passage, or the whole piece when nothing is selected.
+    if (this.playback.playing()) {
+      if (this.playback.paused()) this.playback.resume();
+      else this.playback.pause();
+      return;
+    }
+    const music = this.ear.source() === 'mine' ? transcriptionPiece(this.piece(), this.input.transcription()) : this.piece();
     const selection = this.ear.playRange();
-    void this.playback.play(this.piece(), this.bpm(), {
+    void this.playback.play(music, this.bpm(), {
       fromBar: selection.from,
       toBar: selection.to,
       loop: this.ear.loop(),
@@ -307,27 +301,18 @@ export class App {
     });
   }
 
-  /** Plays (or stops) the listener's own notes, over the selection like the original. */
-  protected playMine(): void {
-    if (this.playback.playing() || this.playback.loading()) {
-      this.playback.stop();
-      return;
-    }
-    const selection = this.ear.playRange();
-    void this.playback.play(transcriptionPiece(this.piece(), this.input.transcription()), this.bpm(), {
-      fromBar: selection.from,
-      toBar: selection.to,
-      loop: this.ear.loop(),
-      countIn: this.ear.countIn(),
-    });
-  }
-
-  /** Keyboard shortcuts for note input, except while typing in a field. */
+  /** Keyboard shortcuts — Space to play, and note input in Ear Training — except while typing in a field. */
   protected onKey(event: KeyboardEvent): void {
-    if (!this.ear.active() || event.defaultPrevented) return;
+    if (event.defaultPrevented) return;
     const target = event.target as HTMLElement | null;
     if (target?.closest?.('input, select, textarea, [contenteditable="true"]')) return;
-    if (this.input.handleKey(event)) event.preventDefault();
+    // Space plays, unless it is pressing a focused button.
+    if (event.key === ' ' && !event.ctrlKey && !event.metaKey && !target?.closest?.('button, summary, a')) {
+      event.preventDefault();
+      this.togglePlay();
+      return;
+    }
+    if (this.ear.active() && this.input.handleKey(event)) event.preventDefault();
   }
 
   protected print(): void {

@@ -1,52 +1,113 @@
-import { ChangeDetectionStrategy, Component, computed, inject, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, computed, inject, output, signal } from '@angular/core';
 import { PlaybackService } from '../playback/playback.service';
+import { AnswerCheckState } from './answer-check.state';
 import { EarTrainingState } from './ear-training.state';
 import { NoteInputState } from './note-input.state';
+import { lengthName } from './scoring';
 
-/** The note values on the Write toolbar, as SMuFL (Bravura) notes, with MuseScore's shortcut keys. */
+/** The note values on the toolbar, as SMuFL (Bravura) notes, with MuseScore's shortcut keys. */
 const DURATIONS = [
-  { ticks: 16, glyph: '\uE1D2', name: 'Whole note (semibreve)', key: '7' },
-  { ticks: 8, glyph: '\uE1D3', name: 'Half note (minim)', key: '6' },
-  { ticks: 4, glyph: '\uE1D5', name: 'Quarter note (crotchet)', key: '5' },
-  { ticks: 2, glyph: '\uE1D7', name: 'Eighth note (quaver)', key: '4' },
-  { ticks: 1, glyph: '\uE1D9', name: 'Sixteenth note (semiquaver)', key: '3' },
-  { ticks: 0.5, glyph: '\uE1DB', name: 'Thirty-second note (demisemiquaver)', key: '2' },
+  { ticks: 16, glyph: '', name: 'Whole note (semibreve)', key: '7' },
+  { ticks: 8, glyph: '', name: 'Half note (minim)', key: '6' },
+  { ticks: 4, glyph: '', name: 'Quarter note (crotchet)', key: '5' },
+  { ticks: 2, glyph: '', name: 'Eighth note (quaver)', key: '4' },
+  { ticks: 1, glyph: '', name: 'Sixteenth note (semiquaver)', key: '3' },
+  { ticks: 0.5, glyph: '', name: 'Thirty-second note (demisemiquaver)', key: '2' },
+];
+
+/** Every shortcut, for the Shortcuts popover. */
+const SHORTCUTS: [string, string][] = [
+  ['N', 'Start or stop writing notes'],
+  ['Click the stave · A–G', 'Write a note'],
+  ['Shift + click · Shift + A–G', 'Add a note to the chord'],
+  ['0', 'Write a rest'],
+  ['7 6 5 4 3 2', 'Whole note … thirty-second note'],
+  ['.', 'Dotted'],
+  ['↑ ↓', 'Pitch up or down a semitone (Ctrl/⌘: an octave)'],
+  ['← →', 'Previous or next note'],
+  ['Delete', 'Turn the selected note into a rest'],
+  ['Ctrl/⌘ + Z · Ctrl + Y', 'Undo · redo'],
+  ['Space', 'Play or pause'],
+  ['Esc', 'Stop writing, or deselect'],
 ];
 
 /**
- * The compact secondary toolbar shown in Ear Training mode, between the generator controls
- * and the score. Bars are chosen directly on the score; the main tempo slider remains the
- * only tempo control.
+ * Ear Training's controls, in three groups by what the listener is doing: writing notes,
+ * listening (one Play button for the selected bars), and checking or revealing the answer.
+ * The less used settings live in small menus, and one line of help changes with the task.
  */
 @Component({
   selector: 'app-ear-toolbar',
   templateUrl: './ear-toolbar.component.html',
   styleUrl: './ear-toolbar.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { '(document:click)': 'closeMenus($event)' },
 })
 export class EarToolbarComponent {
   protected readonly ear = inject(EarTrainingState);
   protected readonly playback = inject(PlaybackService);
   protected readonly input = inject(NoteInputState);
+  protected readonly check = inject(AnswerCheckState);
+  private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
+
   protected readonly durations = DURATIONS;
-  protected readonly glyph = { dot: '\uE1E7', rest: '\uE4E5', flat: '\uE260', natural: '\uE261', sharp: '\uE262' };
+  protected readonly shortcuts = SHORTCUTS;
+  protected readonly glyph = { dot: '', rest: '', flat: '', natural: '', sharp: '' };
+  protected readonly showShortcuts = signal(false);
 
-  /** Play (or stop) the selection — the same action as the main Play button. */
+  /** Play, pause or resume the selected bars (the app decides what plays). */
   readonly togglePlay = output<void>();
-  /** Play (or stop) the listener's own notes over the selection. */
-  readonly playMine = output<void>();
 
-  protected readonly status = computed(() => {
+  /** The Play button says exactly what it will do. */
+  protected readonly playLabel = computed(() => {
     if (this.playback.loading()) return 'Loading piano…';
-    if (!this.playback.playing()) return '';
-    const bar = this.playback.currentBar();
-    const where =
-      bar !== null ? `Playing bar ${bar + 1}` : this.playback.countingIn() ? 'Counting in…' : 'Starting…';
-    return this.playback.paused() ? `Paused · bar ${(bar ?? 0) + 1}` : where;
+    if (this.playback.playing()) return this.playback.paused() ? '▶ Resume' : '❚❚ Pause';
+    const s = this.ear.selection();
+    return `▶ Play ${s ? this.ear.selectionLabel().toLowerCase() : 'the whole piece'}`;
   });
 
-  protected togglePause(): void {
-    if (this.playback.paused()) this.playback.resume();
-    else this.playback.pause();
+  protected readonly status = computed(() => {
+    if (!this.playback.playing() || this.playback.loading()) return '';
+    const bar = this.playback.currentBar();
+    if (this.playback.paused()) return `Paused at bar ${(bar ?? 0) + 1}`;
+    return bar !== null ? `Bar ${bar + 1}` : this.playback.countingIn() ? 'Counting in…' : '';
+  });
+
+  /** One line of help for what the listener is doing now (or why something did not happen). */
+  protected readonly hint = computed(() => {
+    const message = this.input.message();
+    if (message) return { text: message, warning: true };
+    if (this.input.active()) {
+      const what = this.input.restMode() ? `${lengthName(this.input.ticks())} rest` : lengthName(this.input.ticks());
+      return { text: `Click the stave to place a ${what}, or type A–G. Press Esc when you're done.`, warning: false };
+    }
+    if (this.input.selected()) return { text: 'Note selected: ↑ ↓ change its pitch, 2–7 its length, Delete removes it.', warning: false };
+    if (this.input.hasNotes()) return { text: 'Check your answers whenever you like — only the bars you’ve written in are marked.', warning: false };
+    return { text: 'Listen, then press Write notes (N) and click the stave to write what you hear. Select bars on the score to play just those.', warning: false };
+  });
+
+  protected readonly revealedCount = computed(() => this.ear.revealed().length);
+
+  protected stop(): void {
+    this.playback.stop();
+  }
+
+  protected setSource(source: 'original' | 'mine'): void {
+    this.playback.stop();
+    this.ear.source.set(source);
+  }
+
+  /** Runs a menu item and closes its menu. */
+  protected pick(menu: HTMLDetailsElement, action: () => void): void {
+    action();
+    menu.open = false;
+  }
+
+  /** A click anywhere else closes an open menu. */
+  protected closeMenus(event: MouseEvent): void {
+    const target = event.target as Node | null;
+    this.element.nativeElement.querySelectorAll<HTMLDetailsElement>('details[open]').forEach((d) => {
+      if (!target || !d.contains(target)) d.open = false;
+    });
   }
 }

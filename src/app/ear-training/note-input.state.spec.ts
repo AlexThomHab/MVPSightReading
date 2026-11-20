@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { generatePiece } from '../music/generator';
+import { keySignatureAlter } from '../music/theory';
 import { PlaybackService } from '../playback/playback.service';
 import { EarTrainingState } from './ear-training.state';
 import { NoteInputState } from './note-input.state';
@@ -53,25 +54,29 @@ describe('NoteInputState: MuseScore-style note input', () => {
     expect(rh(0)).toEqual(['C5+E5/6', 'r2', 'r8']);
   });
 
-  it('ties a note over the bar line', () => {
+  it('refuses a note too long for the room left in the bar, and says why', () => {
     key('n');
     key('6');
     key('.');
     key('c');
     // (The dot stays on until . is pressed again.)
     key('d');
-    expect(rh(0)).toEqual(['C5/12', 'D5/4~']);
-    expect(rh(1)[0]).toBe('D5/8');
+    expect(rh(0)).toEqual(['C5/12', 'r4']);
+    expect(rh(1)).toEqual(['r16']);
+    expect(input.message()).toMatch(/dotted minim doesn't fit here — only a crotchet is left/);
   });
 
-  it('writes where the stave is clicked, with the key signature when it is shown', () => {
+  it('writes where the stave is clicked, as the key signature has it, on the snapped beat', () => {
     key('n');
-    ear.showKey.set(true);
     const f5 = 5 * 7 + 3;
-    input.clickAt({ bar: 1, staff: 'rh', index: 0, tick: 0, diatonic: f5 }, false);
-    const sharps = piece.key.id === 'G' || piece.key.id === 'D' || piece.key.id === 'Em' || piece.key.id === 'Bm';
-    expect(rh(1)[0].startsWith(sharps ? 'F#5' : 'F')).toBe(true);
-    expect(input.cursor()).toEqual({ bar: 1, staff: 'rh', tick: 4 });
+    const target = { bar: 1, staff: 'rh' as const, tick: 8, diatonic: f5, x: 0, endX: 0, fits: true };
+    input.clickAt(target, false);
+    const alter = keySignatureAlter(piece.key, 'F');
+    expect(rh(1)).toEqual(['r8', `F${alter > 0 ? '#' : alter < 0 ? 'b' : ''}5/4`, 'r4']);
+    expect(input.cursor()).toEqual({ bar: 1, staff: 'rh', tick: 12 });
+    // Shift-click on that note adds to its chord.
+    input.clickAt({ ...target, diatonic: f5 + 2 }, true);
+    expect(rh(1)[1].split('/')[0].split('+').length).toBe(2);
   });
 
   it('edits the selected note: arrows change its pitch, 2–7 its length, Delete makes it a rest', () => {
@@ -112,7 +117,7 @@ describe('NoteInputState: MuseScore-style note input', () => {
     ear.revealAll();
     expect(key('n')).toBe(true);
     expect(input.active()).toBe(false);
-    input.clickAt({ bar: 0, staff: 'rh', index: 0, tick: 0, diatonic: 35 }, false);
+    input.clickAt({ bar: 0, staff: 'rh', tick: 0, diatonic: 35, x: 0, endX: 0, fits: true }, false);
     expect(rh(0)).toEqual(['r16']);
   });
 

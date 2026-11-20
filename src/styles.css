@@ -11,6 +11,8 @@
   --accent: #8a3b12;
   --accent-strong: #6f2e0d;
   --notice: #fbecc8;
+  /* Writing and checking notes (Ear Training): the blue MuseScore uses for note input. */
+  --input: #1c67d1;
   color-scheme: light;
 }
 

@@ -4,9 +4,11 @@ import { LETTERS, Letter, Pitch } from '../music/theory';
 import { PlaybackService } from '../playback/playback.service';
 import type { InputTarget } from '../score/hit-test';
 import { EarTrainingState } from './ear-training.state';
+import { lengthName } from './scoring';
 import {
   ElementRef,
   Position,
+  Staff,
   Transcription,
   WriteResult,
   addToChord,
@@ -15,21 +17,28 @@ import {
   emptyTranscription,
   indexAt,
   mapPitches,
+  onsets,
   nearestLetter,
   pitchAt,
   positionOf,
+  restsBetween,
   setDuration,
   step,
   transpose,
   write,
 } from './transcription';
 
-/** Everything an undo restores: the notes, and where the selection and input cursor were. */
+/** Everything an undo restores: the notes, which bar/staves were attempted, the selection and input cursor. */
 interface EditState {
   transcription: Transcription;
+  /** "bar:staff" of every bar and stave the listener has written in (kept even if they delete it all again). */
+  attempted: ReadonlySet<string>;
   selected: ElementRef | null;
   cursor: Position | null;
 }
+
+const NOTHING: ReadonlySet<string> = new Set();
+const keyOf = (bar: number, staff: Staff) => `${bar}:${staff}`;
 
 /** The note values on the toolbar and their MuseScore shortcuts (1 = 64th … 7 = whole). */
 export const DURATION_KEYS: Readonly<Record<string, number>> = { '2': 0.5, '3': 1, '4': 2, '5': 4, '6': 8, '7': 16 };
@@ -56,9 +65,13 @@ export class NoteInputState {
   /** Clicks (and letters) write rests instead of notes. */
   readonly restMode = signal(false);
   readonly ticks = computed(() => this.base() * (this.dotted() ? 1.5 : 1));
+  /** A short note when something cannot be done (shown briefly, and read out). */
+  readonly message = signal('');
+  private messageTimer: ReturnType<typeof setTimeout> | undefined;
 
-  private piece: Piece | null = null;
-  private readonly state = signal<EditState>({ transcription: { bars: [], lengths: [], compound: false }, selected: null, cursor: null });
+  /** The piece being transcribed. */
+  readonly piece = signal<Piece | null>(null);
+  private readonly state = signal<EditState>({ transcription: { bars: [], lengths: [], compound: false }, attempted: NOTHING, selected: null, cursor: null });
   private past: EditState[] = [];
   private future: EditState[] = [];
   readonly canUndo = signal(false);
@@ -67,13 +80,14 @@ export class NoteInputState {
   readonly transcription = computed(() => this.state().transcription);
   readonly selected = computed(() => this.state().selected);
   readonly cursor = computed(() => this.state().cursor);
+  readonly attempted = computed(() => this.state().attempted);
   readonly hasNotes = computed(() => this.transcription().bars.some((b) => [...b.rh, ...b.lh].some((n) => !n.rest)));
 
   /** Starts afresh for a new piece (a piece seen before keeps its notes). */
   load(piece: Piece): void {
-    if (piece === this.piece) return;
-    this.piece = piece;
-    this.state.set({ transcription: emptyTranscription(piece), selected: null, cursor: null });
+    if (piece === this.piece()) return;
+    this.piece.set(piece);
+    this.state.set({ transcription: emptyTranscription(piece), attempted: NOTHING, selected: null, cursor: null });
     this.past = [];
     this.future = [];
     this.syncHistory();
@@ -126,8 +140,9 @@ export class NoteInputState {
   private applyLengthToSelection(): void {
     const s = this.state();
     if (this.active() || !s.selected || !this.editable(s.selected.bar)) return;
+    if (!this.fits(s.selected.bar, positionOf(s.transcription, s.selected).tick, this.ticks())) return;
     const r = setDuration(s.transcription, s.selected, this.ticks());
-    if (r) this.commit({ transcription: r.transcription, selected: r.placed, cursor: r.next });
+    if (r) this.commit({ ...s, transcription: r.transcription, selected: r.placed, cursor: r.next });
   }
 
   toggleRest(): void {
@@ -144,11 +159,18 @@ export class NoteInputState {
 
   /** A click on the stave in note input: a note (or rest) there; with Shift, added to the chord there. */
   clickAt(target: InputTarget, chord: boolean): void {
-    if (!this.active() || !this.editable(target.bar)) return;
+    if (!this.active()) return;
+    if (!this.editable(target.bar)) {
+      this.say(`Bar ${target.bar + 1} is revealed — hide it again to write in it.`);
+      return;
+    }
     const s = this.state();
-    const pitch = pitchAt(target.diatonic, this.keyShown());
-    const ref: ElementRef = { bar: target.bar, staff: target.staff, index: target.index };
-    if (chord && !this.restMode()) {
+    const pitch = pitchAt(target.diatonic, this.key());
+    const voice = s.transcription.bars[target.bar][target.staff];
+    const index = onsets(voice).findIndex((t) => Math.abs(t - target.tick) < 1e-6);
+    // Shift-click on a note adds to its chord.
+    if (chord && !this.restMode() && index >= 0 && !voice[index].rest) {
+      const ref: ElementRef = { bar: target.bar, staff: target.staff, index };
       const t = addToChord(s.transcription, ref, pitch);
       this.commit({ ...s, transcription: t, selected: ref });
       this.sound(elementOf(t, ref)?.pitches ?? [pitch]);
@@ -163,13 +185,13 @@ export class NoteInputState {
     if (!this.active() || !s.cursor) return;
     const near = this.lastPitch();
     if (chord && s.selected && this.editable(s.selected.bar)) {
-      const pitch = pitchAt(nearestLetter(letter, near, s.selected.staff), this.keyShown());
+      const pitch = pitchAt(nearestLetter(letter, near, s.selected.staff), this.key());
       const t = addToChord(s.transcription, s.selected, pitch);
       this.commit({ ...s, transcription: t });
       this.sound(elementOf(t, s.selected)?.pitches ?? [pitch]);
       return;
     }
-    this.writeAt(s.cursor, [pitchAt(nearestLetter(letter, near, s.cursor.staff), this.keyShown())]);
+    this.writeAt(s.cursor, [pitchAt(nearestLetter(letter, near, s.cursor.staff), this.key())]);
   }
 
   /** 0 in note input: a rest at the cursor. */
@@ -179,9 +201,14 @@ export class NoteInputState {
   }
 
   private writeAt(pos: Position, pitches: Pitch[] | null): void {
-    if (!this.editable(pos.bar)) return;
-    const r: WriteResult = write(this.state().transcription, pos, this.ticks(), pitches);
-    this.commit({ transcription: r.transcription, selected: r.placed, cursor: r.next });
+    if (!this.editable(pos.bar)) {
+      this.say(`Bar ${pos.bar + 1} is revealed — hide it again to write in it.`);
+      return;
+    }
+    if (!this.fits(pos.bar, pos.tick, this.ticks())) return;
+    const s = this.state();
+    const r: WriteResult = write(s.transcription, pos, this.ticks(), pitches);
+    this.commit({ ...s, transcription: r.transcription, selected: r.placed, cursor: r.next });
     if (pitches) this.sound(pitches);
     // At the end of the piece there is nowhere left to write.
     if (!r.next) this.exit();
@@ -235,15 +262,45 @@ export class NoteInputState {
     }
   }
 
+  /** Start over: every note gone and nothing attempted. */
   clearAll(): void {
-    if (!this.piece || !this.hasNotes()) return;
-    this.commit({ transcription: emptyTranscription(this.piece), selected: null, cursor: this.active() ? this.firstEditable() : null });
+    const piece = this.piece();
+    if (!piece || (!this.hasNotes() && !this.attempted().size)) return;
+    const empty: EditState = { transcription: emptyTranscription(piece), attempted: NOTHING, selected: null, cursor: null };
+    this.commit({ ...empty, cursor: this.active() ? this.firstEditable() : null }, false);
+  }
+
+  /** Clears one bar of one stave and marks it not attempted again (the explicit reset). */
+  resetAttempt(bar: number, staff: Staff): void {
+    const s = this.state();
+    const len = s.transcription.lengths[bar];
+    if (len === undefined) return;
+    const transcription = structuredClone(s.transcription);
+    transcription.bars[bar][staff] = restsBetween(0, len, transcription.compound);
+    const attempted = new Set(s.attempted);
+    attempted.delete(keyOf(bar, staff));
+    const selected = s.selected?.bar === bar && s.selected.staff === staff ? null : s.selected;
+    this.commit({ ...s, transcription, attempted, selected }, false);
   }
 
   // Undo ----------------------------------------------------------------------
 
-  private commit(next: EditState): void {
-    this.past.push(this.state());
+  /**
+   * Records a change (undoable). Unless told otherwise, every bar and stave whose notes changed
+   * becomes attempted.
+   */
+  private commit(next: EditState, markAttempts = true): void {
+    const prev = this.state();
+    if (markAttempts) {
+      const attempted = new Set(next.attempted);
+      next.transcription.bars.forEach((b, bar) => {
+        for (const staff of ['rh', 'lh'] as const) {
+          if (JSON.stringify(b[staff]) !== JSON.stringify(prev.transcription.bars[bar]?.[staff])) attempted.add(keyOf(bar, staff));
+        }
+      });
+      next = { ...next, attempted };
+    }
+    this.past.push(prev);
     if (this.past.length > HISTORY_LIMIT) this.past.shift();
     this.future = [];
     this.state.set(next);
@@ -343,9 +400,25 @@ export class NoteInputState {
 
   // Helpers -------------------------------------------------------------------
 
-  /** Lines and spaces follow the key signature only while it is shown. */
-  private keyShown() {
-    return this.piece && this.ear.showKey() ? this.piece.key : null;
+  /** Lines and spaces follow the key signature (a note on the F line in G major is F♯). */
+  private key() {
+    return this.piece()?.key ?? null;
+  }
+
+  /** Whether a note of `ticks` fits in the bar from `tick`; says why not when it does not. */
+  private fits(bar: number, tick: number, ticks: number): boolean {
+    const room = this.transcription().lengths[bar] - tick;
+    if (ticks <= room + 1e-6) return true;
+    const left = lengthName(room).endsWith('beats') ? `${room / 4} crotchet beats are` : `a ${lengthName(room)} is`;
+    this.say(room > 0 ? `A ${lengthName(ticks)} doesn't fit here — only ${left} left in the bar.` : `A ${lengthName(ticks)} doesn't fit in this bar.`);
+    return false;
+  }
+
+  /** Shows a short message for a few seconds. */
+  say(text: string): void {
+    clearTimeout(this.messageTimer);
+    this.message.set(text);
+    this.messageTimer = setTimeout(() => this.message.set(''), 3500);
   }
 
   /** The note to pitch the next letter from: the selected (last entered) note's top note. */

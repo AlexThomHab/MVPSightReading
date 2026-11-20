@@ -27,6 +27,14 @@ export interface ScoreView {
   showKey: boolean;
   showTime: boolean;
   showTempo: boolean;
+  /** Checked answers: colours for the listener's noteheads, by bar. */
+  marks?: ReadonlyMap<number, BarMarks>;
+}
+
+/** Notehead colours for one bar: per stave, per note, per notehead (null or missing: black). */
+export interface BarMarks {
+  rh: (readonly (string | null)[] | undefined)[];
+  lh: (readonly (string | null)[] | undefined)[];
 }
 
 /** Bar position as fractions of the drawing, for the playback highlight. */
@@ -41,8 +49,9 @@ export interface BarBox {
 export interface ElementGeometry {
   staff: 'rh' | 'lh';
   index: number;
-  /** Ticks from the start of the bar. */
+  /** Ticks from the start of the bar, and the length. */
   tick: number;
+  ticks: number;
   rest: boolean;
   /** Left edge and width of the notehead (or rest). */
   x: number;
@@ -62,6 +71,8 @@ export interface BarGeometry {
   /** The y of each stave's top line; lines are STAFF_SPACE apart. */
   rhTop: number;
   lhTop: number;
+  /** The bar's length in ticks. */
+  length: number;
   elements: ElementGeometry[];
 }
 
@@ -246,7 +257,7 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
       new StaveConnector(treble, bass).setType(isFinal ? 'boldDoubleRight' : 'singleRight').setContext(ctx).draw();
 
       const dynamics = expression ? dynamicsByBar.get(barIndex) : barIndex === 0 && piece.dynamic ? new Map([[0, piece.dynamic]]) : undefined;
-      const built = buildBar(vf, piece, bar, accidentalsFrom, dynamics);
+      const built = buildBar(vf, piece, bar, accidentalsFrom, dynamics, view.marks?.get(barIndex));
       lineMelody.set(barIndex, built.melody);
       lineBass.set(barIndex, built.bassNotes);
       built.treble.forEach((v) => v.setStave(treble));
@@ -270,7 +281,7 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
             const sn = drawn[index];
             const left = sn.getNoteHeadBeginX();
             const ys = [...sn.getYs()].sort((a, b) => a - b);
-            elements.push({ staff, index, tick, rest: !!n.rest, x: left, w: Math.max(8, sn.getNoteHeadEndX() - left), ys });
+            elements.push({ staff, index, tick, ticks: n.ticks, rest: !!n.rest, x: left, w: Math.max(8, sn.getNoteHeadEndX() - left), ys });
             tick += n.ticks;
           });
         }
@@ -281,6 +292,7 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
           noteStart: treble.getNoteStartX(),
           rhTop: treble.getYForLine(0),
           lhTop: bass.getYForLine(0),
+          length: bar.rh.reduce((a, n) => a + n.ticks, 0),
           elements,
         });
       }
@@ -439,7 +451,7 @@ function drawLineMarks(
   }
 }
 
-function buildBar(vf: typeof VF, piece: Piece, bar: Bar, keySpec: string, dynamics?: Map<number, string>): BuiltBar {
+function buildBar(vf: typeof VF, piece: Piece, bar: Bar, keySpec: string, dynamics?: Map<number, string>, marks?: BarMarks): BuiltBar {
   const { Voice, Accidental, Beam, Annotation, Articulation, Modifier, StaveTie, Stem, GraceNote, GraceNoteGroup, Ornament } = vf;
   // Ornament and grace-note accidentals are read against the key signature (if it is shown).
   const key = keySpec === piece.key.id ? piece.key : null;
@@ -449,8 +461,16 @@ function buildBar(vf: typeof VF, piece: Piece, bar: Bar, keySpec: string, dynami
   /** Ticks (semiquavers) per beat of the time signature's denominator. */
   const unit = 16 / piece.time.den;
 
-  const toVoice = (notes: Note[], clef: 'treble' | 'bass', stem?: number, fermata?: 'above' | 'below') => {
+  const toVoice = (notes: Note[], clef: 'treble' | 'bass', stem?: number, fermata?: 'above' | 'below', colours?: BarMarks['rh']) => {
     const staveNotes = notes.map((n) => makeNote(vf, n, clef, stem));
+    // Checked answers: a note all one colour (stem and flag too), or each notehead its own.
+    colours?.forEach((keys, i) => {
+      const sn = staveNotes[i];
+      if (!sn || !keys) return;
+      const first = keys[0];
+      if (first && keys.every((c) => c === first)) sn.setStyle({ fillStyle: first, strokeStyle: first });
+      else keys.forEach((c, k) => c && sn.setKeyStyle(k, { fillStyle: c, strokeStyle: c }));
+    });
     // A bar's rest in a bar of its own sits in the middle of the bar, as engravers place it.
     if (notes.length === 1 && notes[0].rest && stem === undefined) staveNotes[0].setCenterAlignment(true);
     // Staccato, accent and tenuto sit at the notehead, away from the stem.
@@ -518,8 +538,8 @@ function buildBar(vf: typeof VF, piece: Piece, bar: Bar, keySpec: string, dynami
     treble = [toVoice(bar.voices.s, 'treble', Stem.UP, 'above'), toVoice(bar.voices.a, 'treble', Stem.DOWN)];
     bass = [toVoice(bar.voices.t, 'bass', Stem.UP), toVoice(bar.voices.b, 'bass', Stem.DOWN, 'below')];
   } else {
-    treble = [toVoice(bar.rh, 'treble')];
-    bass = [toVoice(bar.lh, 'bass')];
+    treble = [toVoice(bar.rh, 'treble', undefined, undefined, marks?.rh)];
+    bass = [toVoice(bar.lh, 'bass', undefined, undefined, marks?.lh)];
   }
   Accidental.applyAccidentals(treble.map((v) => v.voice), keySpec);
   Accidental.applyAccidentals(bass.map((v) => v.voice), keySpec);

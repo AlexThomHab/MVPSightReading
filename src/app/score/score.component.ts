@@ -12,7 +12,8 @@ import {
   viewChild,
 } from '@angular/core';
 import { Piece } from '../music/model';
-import { BarBox, Drawing, ScoreView, drawPiece, loadVexFlow } from './engraving';
+import { Pitch, diatonicIndex } from '../music/theory';
+import { BarBox, BarMarks, Drawing, ScoreView, drawPiece, loadVexFlow } from './engraving';
 import { InputTarget, Staff, TOP_LINE, elementAt, geometryOf, inputTargetAt, ledgerLines, yOf } from './hit-test';
 
 /** A note or rest in the listener's transcription. */
@@ -31,6 +32,15 @@ export interface NoteInputView {
   rest: boolean;
   cursor: { bar: number; staff: Staff; tick: number } | null;
   selected: NoteRefOnScore | null;
+}
+
+/** An expected note the listener left out, drawn when reviewing mistakes. */
+export interface MissingOnScore {
+  bar: number;
+  staff: Staff;
+  tick: number;
+  ticks: number;
+  pitch: Pitch;
 }
 
 // SMuFL (Bravura) glyphs for the ghost note.
@@ -93,8 +103,21 @@ const PLAIN = [16, 8, 4, 2, 1, 0.5];
         @if (cursorBox(); as c) {
           <rect class="input-cursor" [attr.x]="c.x" [attr.y]="c.y" [attr.width]="c.w" [attr.height]="c.h" rx="2" />
         }
+        @for (w of wrongMarks(); track $index) {
+          <text class="wrong-mark" [attr.x]="w.x" [attr.y]="w.y" text-anchor="middle">✗</text>
+        }
+        @for (m of missingNotes(); track $index) {
+          <g class="missing-note">
+            @for (ly of m.ledgers; track ly) {
+              <line [attr.x1]="m.x - 5" [attr.x2]="m.x + 17" [attr.y1]="ly" [attr.y2]="ly" />
+            }
+            <text [attr.x]="m.x" [attr.y]="m.y">{{ m.glyph }}</text>
+          </g>
+        }
         @if (ghost(); as g) {
-          <g class="ghost">
+          <g class="ghost" [class.invalid]="!g.fits">
+            <!-- The span of the bar the note will take. -->
+            <rect class="span" [attr.x]="g.x - 3" [attr.y]="g.top - 14" [attr.width]="g.spanW" height="68" rx="3" />
             @for (ly of g.ledgers; track ly) {
               <line [attr.x1]="g.x - 5" [attr.x2]="g.x + 17" [attr.y1]="ly" [attr.y2]="ly" />
             }
@@ -108,15 +131,25 @@ const PLAIN = [16, 8, 4, 2, 1, 0.5];
             @if (g.dot; as dt) {
               <text [attr.x]="dt.x" [attr.y]="dt.y">{{ dotGlyph }}</text>
             }
+            @if (!g.fits) {
+              <text class="warning" [attr.x]="g.x - 3" [attr.y]="g.top - 20">Too long for this bar</text>
+            }
           </g>
         }
       </svg>
+    }
+    @if (tip(); as t) {
+      <div class="note-tip" role="status" [style.left.%]="t.left" [style.top.%]="t.top">
+        @for (line of t.lines; track $index) {
+          <div>{{ line }}</div>
+        }
+      </div>
     }
     @if (concealed() && noteInput()?.active) {
       <div
         class="input-surface"
         (pointermove)="onInputMove($event)"
-        (pointerleave)="hover.set(null)"
+        (pointerleave)="pointer.set(null)"
         (pointerdown)="onInputDown($event)"
       ></div>
     }
@@ -192,6 +225,59 @@ const PLAIN = [16, 8, 4, 2, 1, 0.5];
     app-score .ghost line.stem {
       stroke-width: 1.2;
     }
+    app-score .ghost .span {
+      fill: rgb(28 103 209 / 0.08);
+      stroke: rgb(28 103 209 / 0.35);
+      stroke-dasharray: 3 3;
+    }
+    app-score .ghost.invalid text {
+      fill: rgb(217 48 37 / 0.6);
+    }
+    app-score .ghost.invalid line {
+      stroke: rgb(217 48 37 / 0.6);
+    }
+    app-score .ghost.invalid .span {
+      fill: rgb(217 48 37 / 0.06);
+      stroke: rgb(217 48 37 / 0.5);
+    }
+    app-score .ghost text.warning {
+      font-family: var(--sans, sans-serif);
+      font-size: 12px;
+      font-weight: 600;
+      fill: rgb(217 48 37);
+    }
+    /* Review Mistakes: the notes left out, in orange. */
+    app-score .missing-note text {
+      font-family: Bravura, serif;
+      font-size: 40px;
+      fill: rgb(227 116 0 / 0.85);
+    }
+    app-score .missing-note line {
+      stroke: rgb(227 116 0 / 0.85);
+      stroke-width: 1.3;
+    }
+    app-score .wrong-mark {
+      font-family: var(--sans, sans-serif);
+      font-size: 13px;
+      font-weight: 700;
+      fill: #d93025;
+    }
+    /* What is wrong with the selected note, after checking. */
+    app-score .note-tip {
+      position: absolute;
+      transform: translate(-50%, 8px);
+      max-width: 280px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      background: #1d1b19;
+      color: #fff;
+      font-size: 0.8rem;
+      line-height: 1.35;
+      pointer-events: none;
+      white-space: normal;
+      z-index: 2;
+      box-shadow: 0 2px 8px rgb(0 0 0 / 0.2);
+    }
     app-score .input-cursor {
       fill: rgb(28 103 209 / 0.12);
       stroke: rgb(28 103 209 / 0.7);
@@ -215,6 +301,7 @@ const PLAIN = [16, 8, 4, 2, 1, 0.5];
       app-score .bar-target,
       app-score .highlight,
       app-score .input-overlay,
+      app-score .note-tip,
       app-score .input-surface {
         display: none;
       }
@@ -236,6 +323,14 @@ export class ScoreComponent {
   readonly selection = input<{ from: number; to: number } | null>(null);
   /** Note input (Ear Training), or null when the score is not editable. */
   readonly noteInput = input<NoteInputView | null>(null);
+  /** Checked answers: green and red noteheads, by bar. */
+  readonly marks = input<ReadonlyMap<number, BarMarks> | undefined>(undefined);
+  /** Checked answers: what to say about a selected note ("bar:staff:index" → lines). */
+  readonly feedback = input<ReadonlyMap<string, string[]>>(new Map());
+  /** Review Mistakes: the expected notes the listener left out. */
+  readonly missing = input<readonly MissingOnScore[]>([]);
+  /** Checked answers: the listener's notes with something wrong (a cross above each). */
+  readonly wrong = input<readonly NoteRefOnScore[]>([]);
   /** A bar was clicked (or activated from the keyboard) without dragging. */
   readonly barClick = output<number>();
   /** A drag from one bar to another (emitted continuously while dragging). */
@@ -251,8 +346,21 @@ export class ScoreComponent {
   protected readonly error = signal('');
   protected readonly boxes = signal<BarBox[]>([]);
   protected readonly drawing = signal<Drawing | null>(null);
-  /** Where note input would write under the pointer. */
-  protected readonly hover = signal<InputTarget | null>(null);
+  /** The pointer over the score in note input (score units), or null when it is elsewhere. */
+  protected readonly pointer = signal<{ x: number; y: number } | null>(null);
+  /** Where note input would write under the pointer: snapped to the next note's rhythmic grid. */
+  protected readonly hover = computed<InputTarget | null>(
+    () => {
+      const p = this.pointer();
+      const d = this.drawing();
+      const input = this.noteInput();
+      if (!p || !d || !input?.active) return null;
+      const t = inputTargetAt(d.bars, p.x, p.y, input.ticks, this.piece().time.compound);
+      return t && this.editable(t.bar) ? t : null;
+    },
+    // Only a change of place, pitch or fit redraws the ghost.
+    { equal: (a, b) => a?.bar === b?.bar && a?.staff === b?.staff && a?.tick === b?.tick && a?.diatonic === b?.diatonic && a?.fits === b?.fits && a?.endX === b?.endX },
+  );
   protected readonly revealedSet = computed(() => new Set(this.revealed()));
   protected readonly dotGlyph = DOT;
   private readonly view = computed<ScoreView>(() => ({
@@ -261,6 +369,7 @@ export class ScoreComponent {
     showKey: this.showKey(),
     showTime: this.showTime(),
     showTempo: this.showTempo(),
+    marks: this.marks(),
   }));
   private readonly host = viewChild.required<ElementRef<HTMLDivElement>>('host');
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -324,13 +433,7 @@ export class ScoreComponent {
   }
 
   protected onInputMove(event: PointerEvent): void {
-    const p = this.toScore(event);
-    const d = this.drawing();
-    const t = p && d ? inputTargetAt(d.bars, p.x, p.y) : null;
-    const target = t && this.editable(t.bar) ? t : null;
-    const h = this.hover();
-    // Only a change of slot or pitch redraws the ghost.
-    if (h?.bar !== target?.bar || h?.staff !== target?.staff || h?.index !== target?.index || h?.diatonic !== target?.diatonic) this.hover.set(target);
+    this.pointer.set(this.toScore(event));
   }
 
   protected onInputDown(event: PointerEvent): void {
@@ -360,16 +463,17 @@ export class ScoreComponent {
     const t = this.hover();
     const d = this.drawing();
     if (!input?.active || !t || !d) return null;
-    const found = geometryOf(d.bars, t.bar, t.staff, t.index);
-    if (!found) return null;
-    const top = t.staff === 'rh' ? found.g.rhTop : found.g.lhTop;
-    const x = found.e.x;
+    const g = d.bars.find((b) => b.bar === t.bar);
+    if (!g) return null;
+    const top = t.staff === 'rh' ? g.rhTop : g.lhTop;
+    const x = t.x;
+    const frame = { top, fits: t.fits, spanW: Math.max(18, t.endX - t.x) };
     const dotted = !PLAIN.includes(input.ticks);
     const base = dotted ? input.ticks / 1.5 : input.ticks;
     if (input.rest) {
       // A semibreve rest hangs from the fourth line; the others sit round the middle line.
       const y = top + (base === 16 ? 10 : 20);
-      return { x, y, glyph: REST[base] ?? REST[4], ledgers: [], stem: null, flag: null, dot: dotted ? { x: x + 16, y: top + 15 } : null };
+      return { ...frame, x, y, glyph: REST[base] ?? REST[4], ledgers: [], stem: null, flag: null, dot: dotted ? { x: x + 16, y: top + 15 } : null };
     }
     const y = yOf(t.staff, top, t.diatonic);
     const up = t.diatonic < TOP_LINE[t.staff] - 4;
@@ -379,6 +483,7 @@ export class ScoreComponent {
     const flags = up ? FLAG_UP : FLAG_DOWN;
     const onLine = (TOP_LINE[t.staff] - t.diatonic) % 2 === 0;
     return {
+      ...frame,
       x,
       y,
       glyph: head,
@@ -412,6 +517,53 @@ export class ScoreComponent {
     const { e } = found;
     const pad = e.rest ? 12 : 8;
     return { x: e.x - 4, y: e.ys[0] - pad, w: e.w + 8, h: e.ys[e.ys.length - 1] - e.ys[0] + pad * 2 };
+  });
+
+  /** The left-out notes, placed where they belong in the listener's bar. */
+  protected readonly missingNotes = computed(() => {
+    const d = this.drawing();
+    if (!d) return [];
+    return this.missing().flatMap((m) => {
+      const g = d.bars.find((b) => b.bar === m.bar);
+      const own = g?.elements.filter((e) => e.staff === m.staff).sort((a, b) => a.tick - b.tick);
+      if (!g || !own?.length) return [];
+      // Between the elements either side of the tick, in proportion.
+      let x = own[0].x;
+      own.forEach((e, i) => {
+        const next = own[i + 1];
+        const end = next ? next.tick : e.tick + e.ticks;
+        const endX = next ? next.x : g.right - 12;
+        if (m.tick >= e.tick - 1e-6 && m.tick < end - 1e-6) x = e.x + ((m.tick - e.tick) / (end - e.tick)) * (endX - e.x);
+      });
+      const top = m.staff === 'rh' ? g.rhTop : g.lhTop;
+      const D = diatonicIndex(m.pitch);
+      const head = m.ticks >= 16 ? HEAD['whole'] : m.ticks >= 8 ? HEAD['half'] : HEAD['black'];
+      return [{ x, y: yOf(m.staff, top, D), glyph: head, ledgers: ledgerLines(m.staff, top, D) }];
+    });
+  });
+
+  /** A cross above each wrong note, so a mistake is not shown by colour alone. */
+  protected readonly wrongMarks = computed(() => {
+    const d = this.drawing();
+    if (!d) return [];
+    return this.wrong().flatMap((w) => {
+      const found = geometryOf(d.bars, w.bar, w.staff, w.index);
+      if (!found) return [];
+      const { e, g } = found;
+      const top = w.staff === 'rh' ? g.rhTop : g.lhTop;
+      return [{ x: e.x + e.w / 2, y: Math.min(e.ys[0] - 12, top - 6) }];
+    });
+  });
+
+  /** The selected note's feedback, under it. */
+  protected readonly tip = computed(() => {
+    const s = this.noteInput()?.selected;
+    const box = this.selectionBox();
+    const d = this.drawing();
+    if (!s || !box || !d) return null;
+    const lines = this.feedback().get(`${s.bar}:${s.staff}:${s.index}`);
+    if (!lines?.length) return null;
+    return { left: ((box.x + box.w / 2) / d.width) * 100, top: ((box.y + box.h) / d.height) * 100, lines };
   });
 
   constructor() {
