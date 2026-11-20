@@ -1,4 +1,59 @@
 <section class="ear-toolbar" aria-label="Ear training">
+  <div class="group write" aria-label="Write">
+    <span class="group-label">Write</span>
+    <button
+      type="button"
+      class="input-toggle"
+      [class.on]="input.active()"
+      [attr.aria-pressed]="input.active()"
+      (click)="input.toggle()"
+      title="Note input (N to start, Esc to stop)"
+    >
+      Note input <kbd>N</kbd>
+    </button>
+    <div class="palette" role="radiogroup" aria-label="Note value">
+      @for (d of durations; track d.ticks) {
+        <button
+          type="button"
+          role="radio"
+          class="tile"
+          [class.on]="input.base() === d.ticks"
+          [attr.aria-checked]="input.base() === d.ticks"
+          [attr.aria-label]="d.name"
+          [title]="d.name + ' (' + d.key + ')'"
+          (click)="input.setBase(d.ticks)"
+        >
+          <span class="music" aria-hidden="true">{{ d.glyph }}</span>
+        </button>
+      }
+    </div>
+    <div class="palette">
+      <button type="button" class="tile" [class.on]="input.dotted()" [attr.aria-pressed]="input.dotted()" aria-label="Dotted" title="Dotted (.)" (click)="input.toggleDot()">
+        <span class="music dot" aria-hidden="true">{{ glyph.dot }}</span>
+      </button>
+      <button type="button" class="tile" [class.on]="input.restMode()" [attr.aria-pressed]="input.restMode()" aria-label="Rest" title="Rest (0)" (click)="input.toggleRest()">
+        <span class="music rest" aria-hidden="true">{{ glyph.rest }}</span>
+      </button>
+    </div>
+    <div class="palette" aria-label="Accidentals">
+      <button type="button" class="tile" [disabled]="!input.selected()" aria-label="Flat" title="Flat (or ↓ a semitone)" (click)="input.setAccidental(-1)">
+        <span class="music acc" aria-hidden="true">{{ glyph.flat }}</span>
+      </button>
+      <button type="button" class="tile" [disabled]="!input.selected()" aria-label="Natural" title="Natural" (click)="input.setAccidental(0)">
+        <span class="music acc" aria-hidden="true">{{ glyph.natural }}</span>
+      </button>
+      <button type="button" class="tile" [disabled]="!input.selected()" aria-label="Sharp" title="Sharp (or ↑ a semitone)" (click)="input.setAccidental(1)">
+        <span class="music acc" aria-hidden="true">{{ glyph.sharp }}</span>
+      </button>
+    </div>
+    <div class="palette">
+      <button type="button" [disabled]="!input.canUndo()" (click)="input.undo()" aria-label="Undo" title="Undo (Ctrl+Z / ⌘Z)">↶</button>
+      <button type="button" [disabled]="!input.canRedo()" (click)="input.redo()" aria-label="Redo" title="Redo (Ctrl+Y / ⇧⌘Z)">↷</button>
+    </div>
+    <button type="button" class="play" (click)="playMine.emit()" [disabled]="!input.hasNotes() && !playback.playing()">▶ Play my notes</button>
+    <button type="button" (click)="input.clearAll()" [disabled]="!input.hasNotes()">Clear my notes</button>
+  </div>
+
   <div class="group" aria-label="Listen">
     <span class="group-label">Listen</span>
     <span class="selection" aria-live="polite">{{ ear.selectionLabel() }}</span>
@@ -44,5 +99,13 @@
     <span class="count">{{ ear.revealed().length }} of {{ ear.barCount() }} revealed</span>
   </div>
 
-  <p class="help">Click a bar to select it; click another to extend the selection to it, or drag across bars.</p>
+  <p class="help">
+    @if (input.active()) {
+      Note input: click the stave (Shift-click adds to a chord) or type A–G · 2–7 note value (7 = whole) · . dot · 0 rest ·
+      ↑↓ pitch (Ctrl/⌘: octave) · ←→ move · Ctrl/⌘+Z undo · Esc to stop.
+    } @else {
+      Press N (or Note input) to write what you hear in the hidden bars. Click a bar to select it, or drag across bars;
+      click one of your notes to change it: ↑↓ pitch, 2–7 length, Delete to remove.
+    }
+  </p>
 </section>

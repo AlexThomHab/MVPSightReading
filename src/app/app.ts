@@ -10,6 +10,9 @@ import { Key, keyById, keyName } from './music/theory';
 import { CustomisePanelComponent } from './customise/customise-panel.component';
 import { EarToolbarComponent } from './ear-training/ear-toolbar.component';
 import { EarTrainingState } from './ear-training/ear-training.state';
+import { NoteInputState } from './ear-training/note-input.state';
+import { displayPiece, transcriptionPiece } from './ear-training/transcription';
+import { NoteInputView } from './score/score.component';
 import { PlaybackService } from './playback/playback.service';
 import { ScoreComponent } from './score/score.component';
 
@@ -75,11 +78,15 @@ function attempt(settings: Settings): Attempt {
   templateUrl: './app.html',
   styleUrl: './app.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  // Note-input shortcuts (N, 2–7, A–G, arrows, Ctrl/⌘+Z…) work anywhere on the page in Ear Training.
+  host: { '(document:keydown)': 'onKey($event)' },
 })
 export class App {
   protected readonly playback = inject(PlaybackService);
   /** Ear Training mode: the same generator and score, with the notation concealed. */
   protected readonly ear = inject(EarTrainingState);
+  /** Ear Training's note input: the listener's own notes in the hidden bars. */
+  protected readonly input = inject(NoteInputState);
 
   protected readonly grades = GRADES;
   protected readonly styles = STYLE_IDS.map((id) => STYLES[id]);
@@ -138,6 +145,23 @@ export class App {
   protected readonly pendingSettings = computed(
     () => this.ear.active() && !sameSettings({ ...this.settings(), seed: this.applied().seed }, this.applied()),
   );
+  /**
+   * What the score shows: the piece, or in Ear Training the original in revealed bars and the
+   * listener's own notes in the rest.
+   */
+  protected readonly scorePiece = computed(() => {
+    const piece = this.piece();
+    const t = this.input.transcription();
+    if (!this.ear.active() || t.bars.length !== piece.bars.length) return piece;
+    return displayPiece(piece, t, new Set(this.ear.revealed()));
+  });
+
+  protected readonly noteInputView = computed<NoteInputView | null>(() =>
+    this.ear.active()
+      ? { active: this.input.active(), ticks: this.input.ticks(), rest: this.input.restMode(), cursor: this.input.cursor(), selected: this.input.selected() }
+      : null,
+  );
+
   /** Playback tempo; resets to the score's tempo whenever the piece changes. */
   protected readonly bpm = linkedSignal(() => this.piece().tempo.bpm);
 
@@ -207,6 +231,7 @@ export class App {
       untracked(() => {
         this.playback.stop();
         this.ear.reset(piece.bars.length);
+        this.input.load(piece);
       });
     });
   }
@@ -222,6 +247,7 @@ export class App {
       this.style.set(a.style);
       this.keyId.set(a.keyId ?? '');
       this.timeId.set(a.timeId ?? '');
+      this.input.exit();
       this.ear.active.set(false);
     } else {
       this.ear.reset(this.piece().bars.length);
@@ -279,6 +305,29 @@ export class App {
       loop: this.ear.loop(),
       countIn: this.ear.countIn(),
     });
+  }
+
+  /** Plays (or stops) the listener's own notes, over the selection like the original. */
+  protected playMine(): void {
+    if (this.playback.playing() || this.playback.loading()) {
+      this.playback.stop();
+      return;
+    }
+    const selection = this.ear.playRange();
+    void this.playback.play(transcriptionPiece(this.piece(), this.input.transcription()), this.bpm(), {
+      fromBar: selection.from,
+      toBar: selection.to,
+      loop: this.ear.loop(),
+      countIn: this.ear.countIn(),
+    });
+  }
+
+  /** Keyboard shortcuts for note input, except while typing in a field. */
+  protected onKey(event: KeyboardEvent): void {
+    if (!this.ear.active() || event.defaultPrevented) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest?.('input, select, textarea, [contenteditable="true"]')) return;
+    if (this.input.handleKey(event)) event.preventDefault();
   }
 
   protected print(): void {

@@ -96,6 +96,68 @@ button.play {
   color: var(--ink);
 }
 
+/* The Write group: note input, note values, accidentals and undo. */
+.write {
+  flex-basis: 100%;
+}
+
+.palette {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.input-toggle {
+  font-weight: 600;
+}
+
+.input-toggle.on,
+.tile.on {
+  background: rgb(28 103 209);
+  border-color: rgb(28 103 209);
+  color: #fff;
+}
+
+kbd {
+  font: inherit;
+  font-size: 0.72rem;
+  padding: 0 4px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  opacity: 0.75;
+}
+
+.tile {
+  position: relative;
+  width: 30px;
+  height: 36px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.music {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 25px;
+  font-family: Bravura, serif;
+  font-size: 22px;
+  line-height: 0;
+  text-align: center;
+}
+
+.music.dot {
+  top: 18px;
+  font-size: 30px;
+}
+
+.music.rest {
+  top: 18px;
+}
+
+.music.acc {
+  top: 20px;
+}
+
 .help {
   flex-basis: 100%;
   margin: 0;

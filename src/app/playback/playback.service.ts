@@ -1,6 +1,7 @@
 import { Injectable, signal } from '@angular/core';
 import type * as ToneNS from 'tone';
 import { Piece } from '../music/model';
+import { Pitch, midi } from '../music/theory';
 import { PlayOptions, buildSchedule } from './schedule';
 
 type Tone = typeof ToneNS;
@@ -100,6 +101,17 @@ export class PlaybackService {
     transport.position = 0;
     transport.start('+0.1');
     this.playing.set(true);
+  }
+
+  /** Sounds a note or chord briefly, as a notation editor does when a note is written. */
+  async preview(pitches: readonly Pitch[]): Promise<void> {
+    if (this.playing() || !pitches.length) return;
+    const Tone = await this.loadTone();
+    await Tone.start();
+    const piano = await this.loadPiano(Tone);
+    if (this.playing()) return;
+    const names = pitches.map((p) => Tone.Frequency(midi(p), 'midi').toNote());
+    piano.triggerAttackRelease(names, 0.6, undefined, 0.6);
   }
 
   pause(): void {

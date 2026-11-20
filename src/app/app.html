@@ -121,7 +121,7 @@
 }
 
 @if (ear.active()) {
-  <app-ear-toolbar (togglePlay)="togglePlay()" />
+  <app-ear-toolbar (togglePlay)="togglePlay()" (playMine)="playMine()" />
   @if (pendingSettings()) {
     <p class="notice">Your new settings will be used when you click New piece.</p>
   }
@@ -140,7 +140,7 @@
     </p>
   </header>
   <app-score
-    [piece]="piece()"
+    [piece]="scorePiece()"
     [activeBar]="playback.currentBar()"
     [concealed]="ear.active()"
     [revealed]="ear.revealed()"
@@ -150,6 +150,9 @@
     [selection]="ear.active() ? ear.selection() : null"
     (barClick)="ear.clickBar($event)"
     (barDrag)="ear.dragBars($event.anchor, $event.bar)"
+    [noteInput]="noteInputView()"
+    (noteClick)="input.select($event)"
+    (inputClick)="input.clickAt($event.target, $event.chord)"
   />
 </main>
 
