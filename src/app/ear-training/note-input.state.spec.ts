@@ -24,21 +24,21 @@ describe('NoteInputState: MuseScore-style note input', () => {
     input.load(piece);
   });
 
-  it('sounds notes as they are written, unless muted (M), and remembers the choice', () => {
-    expect(input.soundOn()).toBe(true);
+  it('writes notes in silence unless hearing them is turned on (M), and remembers the choice', () => {
+    expect(input.soundOn()).toBe(false);
     key('n');
     key('c');
-    expect(preview).toHaveBeenCalledTimes(1);
-    expect(key('m')).toBe(true);
-    expect(input.soundOn()).toBe(false);
-    key('d');
     key('ArrowUp');
+    expect(preview).not.toHaveBeenCalled();
+    // Written all the same.
+    expect(rh(0)[0]).toBe('C#5/4');
+    expect(key('m')).toBe(true);
+    expect(input.soundOn()).toBe(true);
+    key('d');
     expect(preview).toHaveBeenCalledTimes(1);
-    // Still written, just silent.
-    expect(rh(0).slice(0, 2)).toEqual(['C5/4', 'D#5/4']);
-    expect(localStorage.getItem('note-input-sound')).toBe('off');
-    input.toggleSound();
     expect(localStorage.getItem('note-input-sound')).toBe('on');
+    input.toggleSound();
+    expect(localStorage.getItem('note-input-sound')).toBe('off');
   });
 
   it('toggles note input with N and leaves with Esc, the cursor at the start', () => {

@@ -54,24 +54,6 @@
         <button type="button" class="icon" [disabled]="!input.canUndo()" (click)="input.undo()" aria-label="Undo" title="Undo — Ctrl/⌘ Z">↶</button>
         <button type="button" class="icon" [disabled]="!input.canRedo()" (click)="input.redo()" aria-label="Redo" title="Redo — Ctrl Y / ⇧⌘ Z">↷</button>
       </div>
-      <button
-        type="button"
-        class="icon sound"
-        [class.muted]="!input.soundOn()"
-        [attr.aria-pressed]="input.soundOn()"
-        aria-label="Hear notes as you write them"
-        [title]="input.soundOn() ? 'Notes sound as you write them — click to write in silence (M)' : 'Notes are silent as you write them — click to hear them (M)'"
-        (click)="input.toggleSound()"
-      >
-        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
-          <path d="M3 7.5h3l4-3.5v12l-4-3.5H3z" fill="currentColor" />
-          @if (input.soundOn()) {
-            <path d="M13 7a4 4 0 0 1 0 6M15 4.5a7.5 7.5 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-          } @else {
-            <path d="M13 7.5l5 5M18 7.5l-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-          }
-        </svg>
-      </button>
       <details class="menu" #more>
         <summary class="icon" aria-label="More writing options" title="More">⋯</summary>
         <div class="menu-panel">
@@ -106,6 +88,9 @@
         <div class="menu-panel">
           <label class="check-row"><input type="checkbox" [checked]="ear.loop()" (change)="ear.loop.set($any($event.target).checked)" /> Repeat</label>
           <label class="check-row"><input type="checkbox" [checked]="ear.countIn()" (change)="ear.countIn.set($any($event.target).checked)" /> Count in</label>
+          <label class="check-row" title="Shortcut: M">
+            <input type="checkbox" [checked]="input.soundOn()" (change)="input.toggleSound()" /> Hear notes as I write
+          </label>
           <p class="menu-note">Tempo is set with the slider above.</p>
         </div>
       </details>

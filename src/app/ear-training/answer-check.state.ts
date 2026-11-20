@@ -52,6 +52,15 @@ export class AnswerCheckState {
     this.snapshot.set(new Map());
   }
 
+  /**
+   * Try again: back to before checking — the marking, the results and the selected note's hint
+   * go, and every note written stays, to correct and check again.
+   */
+  tryAgain(): void {
+    this.reset();
+    this.input.select(null);
+  }
+
   /** Bar/staves changed (or reset) since the check. */
   readonly stale = computed(() => {
     const t = this.input.transcription();

@@ -80,10 +80,20 @@ export interface MissingOnScore {
         ></button>
       }
     }
+    <!-- The selected bars: a bracket over them, from the first to the last (one per line of music). -->
+    @for (span of selectionSpans(); track $index) {
+      <div
+        class="selection-span"
+        [class.continues]="span.continues"
+        [class.continued]="span.continued"
+        [style.left.%]="span.left"
+        [style.top.%]="span.top"
+        [style.width.%]="span.width"
+      ></div>
+    }
     @if (highlight(); as box) {
       <div
         class="highlight"
-        [class.ear]="concealed()"
         [style.left.%]="box.x * 100"
         [style.top.%]="box.y * 100"
         [style.width.%]="box.w * 100"
@@ -162,17 +172,12 @@ export interface MissingOnScore {
       width: 100%;
       height: auto;
     }
+    /* The bar being played: a light wash of yellow, the same in both modes. */
     app-score .highlight {
       position: absolute;
-      background: var(--highlight, rgb(255 196 0 / 0.22));
+      background: rgb(255 196 0 / 0.12);
       border-radius: 4px;
       pointer-events: none;
-    }
-    /* The playing bar in ear training: a bar under the bar, distinct from the selection. */
-    app-score .highlight.ear {
-      background: rgb(255 196 0 / 0.18);
-      box-shadow: inset 0 -5px 0 rgb(214 150 0);
-      border-radius: 0 0 4px 4px;
     }
     app-score .bar-target {
       position: absolute;
@@ -192,13 +197,27 @@ export interface MissingOnScore {
     app-score .bar-target:hover {
       border-color: rgb(138 59 18 / 0.35);
     }
-    app-score .bar-target.selected {
-      border-color: var(--accent, #8a3b12);
-      background-color: rgb(138 59 18 / 0.1);
+    /* The selection: a thin bracket above the bars, open where it carries on to another line. */
+    app-score .selection-span {
+      position: absolute;
+      height: 8px;
+      border: 2px solid var(--accent, #8a3b12);
+      border-bottom: 0;
+      border-radius: 3px 3px 0 0;
+      pointer-events: none;
     }
+    app-score .selection-span.continues {
+      border-right: 0;
+      border-top-right-radius: 0;
+    }
+    app-score .selection-span.continued {
+      border-left: 0;
+      border-top-left-radius: 0;
+    }
+    /* No focus box round a bar: the bracket above shows what is selected. */
+    app-score .bar-target:focus,
     app-score .bar-target:focus-visible {
-      outline: 2px solid var(--accent, #8a3b12);
-      outline-offset: 2px;
+      outline: none;
     }
     /* Note input: the ghost note, the input cursor and the selected note, drawn over the score. */
     app-score .input-overlay {
@@ -294,6 +313,7 @@ export interface MissingOnScore {
     }
     @media print {
       app-score .bar-target,
+      app-score .selection-span,
       app-score .highlight,
       app-score .input-overlay,
       app-score .note-tip,
@@ -440,6 +460,26 @@ export class ScoreComponent {
     const bar = el.dataset['bar'];
     return bar === undefined ? null : Number(bar);
   }
+
+  /** The selected bars as one bracket per line of music (in percent of the drawing). */
+  protected readonly selectionSpans = computed(() => {
+    const s = this.selection();
+    const boxes = this.boxes();
+    if (!this.concealed() || !s || !boxes[s.from] || !boxes[s.to]) return [];
+    const spans: { left: number; top: number; width: number; continues: boolean; continued: boolean }[] = [];
+    let first = s.from;
+    for (let bar = s.from; bar <= s.to; bar++) {
+      const next = boxes[bar + 1];
+      // A line of music ends at the last selected bar, or where the next bar starts a new line.
+      if (bar === s.to || !next || Math.abs(next.y - boxes[bar].y) > 1e-6) {
+        const a = boxes[first];
+        const b = boxes[bar];
+        spans.push({ left: a.x * 100, top: a.y * 100, width: (b.x + b.w - a.x) * 100, continues: bar < s.to, continued: first > s.from });
+        first = bar + 1;
+      }
+    }
+    return spans;
+  });
 
   protected readonly highlight = () => {
     const i = this.activeBar();

@@ -24,7 +24,7 @@ const SHORTCUTS: [string, string][] = [
   ['Delete', 'Turn the selected note into a rest'],
   ['Ctrl/⌘ + Z · Ctrl + Y', 'Undo · redo'],
   ['Space', 'Play or pause'],
-  ['M', 'Hear notes as you write them, or not'],
+  ['M', 'Hear notes as you write them, or not (off at first)'],
   ['Esc', 'Stop writing, or deselect'],
 ];
 

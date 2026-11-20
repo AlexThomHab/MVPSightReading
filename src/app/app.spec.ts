@@ -47,7 +47,8 @@ describe('App', () => {
     const el = fixture.nativeElement as HTMLElement;
     [...el.querySelectorAll('button')].find((b) => b.textContent?.includes('Play'))!.click();
     expect(play).toHaveBeenCalledTimes(1);
-    expect(play.mock.calls[0][2]).toBeUndefined();
+    // No count-in unless it is turned on in the settings.
+    expect(play.mock.calls[0][2]).toEqual({ countIn: false });
   });
 
   it('never lets the tempo go above 140', async () => {
@@ -127,7 +128,7 @@ describe('App', () => {
       expect(button('Play my notes')).toBeUndefined();
       const lastBar = ear.barCount() - 1;
       await press('▶ Play the whole piece');
-      expect(play.mock.calls[0][2]).toEqual({ fromBar: 0, toBar: lastBar, loop: false, countIn: true });
+      expect(play.mock.calls[0][2]).toEqual({ fromBar: 0, toBar: lastBar, loop: false, countIn: false });
 
       // Click bar 3, then bar 6: bars 3–6.
       ear.clickBar(2);
@@ -136,7 +137,7 @@ describe('App', () => {
       await toggle('Repeat');
       await toggle('Count in');
       await press('▶ Play bars 3–6');
-      expect(play.mock.calls[1][2]).toEqual({ fromBar: 2, toBar: 5, loop: true, countIn: false });
+      expect(play.mock.calls[1][2]).toEqual({ fromBar: 2, toBar: 5, loop: true, countIn: true });
 
       // Space plays the selection too — even with a bar on the score focused, which it leaves selected.
       play.mockClear();

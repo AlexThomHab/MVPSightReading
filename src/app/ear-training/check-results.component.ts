@@ -36,12 +36,12 @@ import type { Staff } from '../music/model';
           }
         </div>
         <div class="actions">
-          <button type="button" class="primary" (click)="check.check()">Check again</button>
+          <button type="button" class="primary" (click)="check.tryAgain()" title="Clear the marking and keep your notes, to correct them">Try again</button>
+          <button type="button" (click)="check.check()">Check again</button>
           <button type="button" [class.on]="check.review()" [attr.aria-pressed]="check.review()" (click)="check.review.set(!check.review())">
             Review mistakes
           </button>
           <button type="button" (click)="revealAttempted()" [disabled]="allAttemptedRevealed()">Reveal answers</button>
-          <button type="button" class="close" (click)="check.reset()" aria-label="Close the results">✕</button>
         </div>
         <table>
           <thead>

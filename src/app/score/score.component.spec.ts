@@ -68,10 +68,18 @@ describe('ScoreComponent bar selection', () => {
     expect(clicked).toEqual([6]);
   });
 
-  it('outlines the selected bars', async () => {
+  it('marks the selected bars with a bracket over them, one per line of music', async () => {
     fixture.componentRef.setInput('selection', { from: 2, to: 5 });
     await fixture.whenStable();
     const selected = [...fixture.nativeElement.querySelectorAll('.bar-target.selected')].map((b) => (b as HTMLElement).dataset['bar']);
     expect(selected).toEqual(['2', '3', '4', '5']);
+    // Bars 3–4 end the first line, bars 5–6 start the second: two brackets, open at the break.
+    const spans = [...fixture.nativeElement.querySelectorAll('.selection-span')] as HTMLElement[];
+    expect(spans.map((s) => [s.style.left, s.style.top, s.style.width])).toEqual([
+      ['50%', '0%', '50%'],
+      ['0%', '50%', '50%'],
+    ]);
+    expect(spans[0].classList.contains('continues')).toBe(true);
+    expect(spans[1].classList.contains('continued')).toBe(true);
   });
 });

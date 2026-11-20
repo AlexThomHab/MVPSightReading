@@ -15,7 +15,8 @@ export class EarTrainingState {
   /** The selected passage — always continuous — or null for none. */
   readonly selection = signal<BarSelection | null>(null);
   readonly loop = signal(false);
-  readonly countIn = signal(true);
+  /** A bar of clicks before the music: off unless turned on in the playback settings (both modes use it). */
+  readonly countIn = signal(false);
 
   // Revealed bars, and where "Reveal next bar" continues from.
   readonly revealed = signal<number[]>([]);

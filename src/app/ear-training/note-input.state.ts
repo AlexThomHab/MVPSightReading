@@ -45,12 +45,12 @@ export const DURATION_KEYS: Readonly<Record<string, number>> = { '2': 0.5, '3': 
 const HISTORY_LIMIT = 200;
 const SOUND_KEY = 'note-input-sound';
 
-/** The listener's choice to hear notes as they write them (on unless they turned it off). */
+/** The listener's choice to hear notes as they write them (off unless they turned it on). */
 function soundPreference(): boolean {
   try {
-    return localStorage.getItem(SOUND_KEY) !== 'off';
+    return localStorage.getItem(SOUND_KEY) === 'on';
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -74,8 +74,8 @@ export class NoteInputState {
   /** Clicks (and letters) write rests instead of notes. */
   readonly restMode = signal(false);
   /**
-   * Hear each note as it is written or changed. Off, the listener writes by ear alone — a
-   * harder test. Playback is not affected; the choice is remembered between visits.
+   * Hear each note as it is written or changed (a playback setting, off by default: the
+   * listener writes by ear alone). Playback is not affected; the choice is remembered.
    */
   readonly soundOn = signal(soundPreference());
   readonly ticks = computed(() => this.base() * (this.dotted() ? 1.5 : 1));

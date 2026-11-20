@@ -122,17 +122,6 @@ button.link:disabled {
   text-decoration: none;
 }
 
-/* Writing in silence: the speaker shown crossed out, and quieter. */
-.sound {
-  display: inline-grid;
-  place-items: center;
-}
-
-.sound.muted {
-  color: var(--muted);
-  background: var(--panel);
-}
-
 /* Notation tiles in Bravura. */
 .tile {
   position: relative;

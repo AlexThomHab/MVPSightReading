@@ -90,6 +90,24 @@ describe('Check Answers: attempts, checking and feedback', () => {
     expect(check.result()!.percent).toBeLessThan(before!);
   });
 
+  it('tries again: the marking goes and the notes stay, ready to check again', () => {
+    writeFirstNoteRight();
+    input.select({ bar: 0, staff: 'rh', index: 0 });
+    check.check();
+    check.review.set(true);
+    const notes = input.transcription();
+    check.tryAgain();
+    expect(check.result()).toBeNull();
+    expect(check.review()).toBe(false);
+    expect(check.marks().size).toBe(0);
+    expect(check.feedback().size).toBe(0);
+    expect(input.selected()).toBeNull();
+    expect(input.transcription()).toBe(notes);
+    expect([...input.attempted()]).toEqual(['0:rh']);
+    check.check();
+    expect(check.result()!.staves.length).toBe(1);
+  });
+
   it('shows the notes left out only when reviewing mistakes', () => {
     writeFirstNoteRight();
     check.check();

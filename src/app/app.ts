@@ -224,7 +224,7 @@ export class App {
     }
     if (!this.ear.active()) {
       if (this.playback.playing()) this.playback.stop();
-      else void this.playback.play(this.piece(), this.bpm());
+      else void this.playback.play(this.piece(), this.bpm(), { countIn: this.ear.countIn() });
       return;
     }
     if (this.playback.playing()) {
