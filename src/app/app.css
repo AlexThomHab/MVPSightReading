@@ -122,10 +122,34 @@ button {
   padding: 0 16px;
 }
 
-/* The grade: five square buttons. */
+/* The grade: eight square buttons, sharing the width on a phone. */
 .segmented button {
-  width: 40px;
+  width: 38px;
   padding: 0;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+  .grade-field {
+    width: 100%;
+  }
+  .segmented.grades {
+    display: flex;
+    width: 100%;
+  }
+  .segmented.grades button {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+  }
 }
 
 .actions {

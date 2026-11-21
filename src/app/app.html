@@ -16,9 +16,10 @@
 </header>
 
 <section class="toolbar" aria-label="Piece settings">
-  <div class="field">
-    <span class="field-label" id="grade-label">Grade</span>
-    <div class="segmented" role="radiogroup" aria-labelledby="grade-label">
+  <div class="field grade-field">
+    <span class="field-label" id="grade-label" title="Difficulty follows the ABRSM Piano sight-reading parameters (2025–2026 syllabus)">ABRSM Grade</span>
+    <span class="visually-hidden" id="grade-hint">Each grade follows the ABRSM Piano sight-reading parameters for that grade: its keys, time signatures, rhythms, length and notation.</span>
+    <div class="segmented grades" role="radiogroup" aria-labelledby="grade-label" aria-describedby="grade-hint">
       @for (g of grades; track g) {
         <button
           type="button"
@@ -36,8 +37,8 @@
   <label class="field">
     <span class="field-label">Era</span>
     <select (change)="setEra($any($event.target).value)">
-      @for (e of eras; track e.id) {
-        <option [value]="e.id" [selected]="e.id === era()">{{ e.name }}</option>
+      @for (e of eraOptions(); track e.id) {
+        <option [value]="e.id" [selected]="e.id === era()" [disabled]="!e.available">{{ e.name }}{{ e.available ? '' : ' — from Grade ' + e.from }}</option>
       }
     </select>
   </label>
@@ -46,7 +47,7 @@
     <span class="field-label">Form</span>
     <select (change)="setForm($any($event.target).value)">
       @for (f of formOptions(); track f.id) {
-        <option [value]="f.id" [selected]="f.id === form()">{{ f.name }}</option>
+        <option [value]="f.id" [selected]="f.id === form()" [disabled]="!f.available" [title]="f.reason ?? ''">{{ f.name }}{{ f.available ? '' : ' — from Grade ' + f.minGrade }}</option>
       }
     </select>
   </label>
@@ -127,6 +128,9 @@
   />
 }
 
+@if (formNotice()) {
+  <p class="notice" role="status">{{ formNotice() }}</p>
+}
 @if (generationError()) {
   <p class="notice error" role="alert">{{ generationError() }} The previous piece is still shown.</p>
 }

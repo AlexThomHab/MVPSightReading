@@ -74,10 +74,41 @@ export function buildSchedule(piece: Piece, bpm: number, options: PlayOptions = 
       t += note.ticks;
     }
   }
-  const timeOf = (tick: number) =>
-    countInSeconds +
-    (tick - startTick) * secondsPerTick +
-    fermataHold * fermataEnds.filter((e) => e > startTick && e <= tick).length;
+  // The written tempo changes: rit. and accel. glide to their factor by the next mark (or the
+  // end); Più mosso, a tempo… change it at once. Time is the integral of 1 / factor.
+  const total = barStarts[n - 1] + lengths[n - 1];
+  const tickOfRh = (bar: number, index: number) => barStarts[bar] + totalTicks(piece.bars[bar].rh.slice(0, index));
+  const tempoMarks = (piece.expression?.tempos ?? []).map((m) => ({ ...m, tick: tickOfRh(m.at.bar, m.at.index) })).sort((a, b) => a.tick - b.tick);
+  const factorAt = (tick: number): number => {
+    let factor = 1;
+    for (let k = 0; k < tempoMarks.length; k++) {
+      const m = tempoMarks[k];
+      if (m.tick > tick) break;
+      if (m.kind === 'set') factor = m.factor;
+      else {
+        const end = tempoMarks[k + 1]?.tick ?? total;
+        const t = end > m.tick ? Math.min(1, (tick - m.tick) / (end - m.tick)) : 1;
+        factor = factor + (m.factor - factor) * t;
+        if (tick >= end) factor = m.factor;
+      }
+    }
+    return factor;
+  };
+  const GRID = 6;
+  const elapsed: number[] = [0];
+  for (let i = 1; i <= Math.ceil(total * GRID); i++) elapsed[i] = elapsed[i - 1] + secondsPerTick / GRID / factorAt((i - 0.5) / GRID);
+  const at = (tick: number) => {
+    const x = Math.max(0, Math.min(tick * GRID, elapsed.length - 1));
+    const i = Math.floor(x);
+    return elapsed[i] + (elapsed[Math.min(i + 1, elapsed.length - 1)] - elapsed[i]) * (x - i);
+  };
+  const timeOf = (tick: number) => countInSeconds + (at(tick) - at(startTick)) + fermataHold * fermataEnds.filter((e) => e > startTick && e <= tick).length;
+
+  // The right pedal holds every note struck while it is down until it lifts; una corda softens.
+  const tickOfLh = (bar: number, index: number) => barStarts[bar] + totalTicks(piece.bars[bar].lh.slice(0, index));
+  const pedalSpans = (piece.expression?.pedals ?? []).map((p) => [tickOfLh(p.from.bar, p.from.index), tickOfLh(p.to.bar, p.to.index) + (piece.bars[p.to.bar].lh[p.to.index]?.ticks ?? 0)] as const);
+  const softSpans = (piece.expression?.unaCorda ?? []).map((u) => [tickOfRh(u.from.bar, u.from.index), tickOfRh(u.to.bar, u.to.index) + (piece.bars[u.to.bar].rh[u.to.index]?.ticks ?? 0)] as const);
+  const inside = (spans: readonly (readonly [number, number])[], tick: number) => spans.find(([a, z]) => tick >= a - 1e-6 && tick < z - 1e-6);
 
   const loudness = piece.expression ? dynamicCurve(piece, barStarts) : null;
 
@@ -102,17 +133,23 @@ export function buildSchedule(piece: Piece, bpm: number, options: PlayOptions = 
       // With written dynamics, loudness follows them (the left hand a little under the melody).
       const shaped = loudness ? loudness(start) * (velocity / voices[0][1]) : velocity;
       const accent = note.articulation === 'accent' ? 1.18 : 1;
+      const soft = inside(softSpans, start) ? 0.72 : 1;
       const length = note.articulation === 'staccato' ? 0.45 : 0.95;
+      const pedalled = inside(pedalSpans, start);
+      const ends = Math.min(endTick, Math.max(last.start + last.note.ticks, pedalled ? pedalled[1] : 0));
       const event = {
         time: timeOf(start),
         // timeOf() already adds the fermata's hold at the end of a fermata note.
-        duration: (timeOf(last.start + last.note.ticks) - timeOf(start)) * length,
+        duration: (timeOf(ends) - timeOf(start)) * (pedalled ? 1 : length),
         midis: note.pitches.map(midi),
-        velocity: Math.min(1, shaped * accent),
+        velocity: Math.min(1, shaped * accent * soft),
         bar,
       };
       if (note.grace || note.ornament) notes.push(...ornamented(event, note, beatSeconds));
-      else notes.push(event);
+      else if (note.spread && event.midis.length > 1) {
+        // A spread chord rolls up from the bottom note.
+        [...event.midis].sort((a, b) => a - b).forEach((m, k) => notes.push({ ...event, time: event.time + k * 0.035, duration: Math.max(0.05, event.duration - k * 0.035), midis: [m] }));
+      } else notes.push(event);
     }
   }
   notes.sort((a, b) => a.time - b.time);
@@ -149,7 +186,7 @@ export function ornamented(event: ScheduledNote, note: Note, beatSeconds: number
   return out;
 }
 
-const LEVEL: Record<DynamicMark, number> = { pp: 0.3, p: 0.4, mp: 0.52, mf: 0.63, f: 0.76 };
+const LEVEL: Record<DynamicMark, number> = { pp: 0.3, p: 0.4, mp: 0.52, mf: 0.63, f: 0.76, ff: 0.88 };
 
 /**
  * Loudness (0–1) at any tick, from the written dynamics and hairpins: each dynamic holds until

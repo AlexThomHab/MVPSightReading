@@ -34,19 +34,38 @@ describe('App', () => {
     const query = () => new URLSearchParams(location.search);
 
     beforeEach(async () => {
-      history.replaceState(null, '', '/?seed=menus&grade=5&form=nocturne&time=9/8');
+      history.replaceState(null, '', '/?seed=menus&grade=6&form=nocturne&time=9/8');
       fixture = TestBed.createComponent(App);
       await fixture.whenStable();
       el = fixture.nativeElement;
     });
 
     it('offers Grade, Era, Form, Key and Time, the Form menu holding only the era’s forms', () => {
-      expect(labels().slice(0, 5)).toEqual(['Grade', 'Era', 'Form', 'Key', 'Time']);
+      expect(labels().slice(0, 5)).toEqual(['ABRSM Grade', 'Era', 'Form', 'Key', 'Time']);
+      expect(el.querySelectorAll('.segmented.grades button').length).toBe(8);
       expect(options(0)).toEqual(['Baroque', 'Classical / Galant', 'Romantic']);
       expect(menus()[0].value).toBe('romantic');
       expect(options(1)).toEqual(['Nocturne', 'Prelude']);
+      // (12/8 is a Grade 8 metre.)
       expect(options(3)).toEqual(['Random', '4/4', '3/4', '6/8', '9/8']);
-      expect(el.querySelector('.sheet-meta span')!.textContent!.trim()).toMatch(/^Grade 5 · Romantic · Nocturne · .* · 9\/8$/);
+      expect(el.querySelector('.sheet-meta span')!.textContent!.trim()).toMatch(/^Grade 6 · Romantic · Nocturne · .* · 9\/8$/);
+    });
+
+    it('offers every grade, and gives way (saying why) when a grade cannot write the chosen form', async () => {
+      const grade = async (g: number) => {
+        [...el.querySelectorAll<HTMLButtonElement>('.segmented.grades button')].find((b) => b.textContent!.trim() === String(g))!.click();
+        await fixture.whenStable();
+      };
+      await grade(1);
+      // A Romantic melody needs Grade 3: Grade 1 writes a Galant piece instead, and says so.
+      expect(menus()[0].value).toBe('galant');
+      expect(el.querySelector('.notice')!.textContent).toMatch(/from Grade 3 — so Grade 1 has a Minuet instead/);
+      expect([...menus()[0].options].find((o) => o.value === 'romantic')!.disabled).toBe(true);
+      expect([...menus()[1].options].filter((o) => o.disabled).map((o) => o.text)).toEqual(['Polonaise — from Grade 3', 'Gavotte — from Grade 4']);
+      expect(options(3)).toEqual(['Random', '3/4']);
+      await grade(8);
+      expect(options(3)).toEqual(['Random', '3/4']);
+      expect([...menus()[1].options].every((o) => !o.disabled)).toBe(true);
     });
 
     it('chooses an era’s first form, and resets a time signature the new form is not written in', async () => {
@@ -62,12 +81,12 @@ describe('App', () => {
     });
 
     it('keeps a time signature the new form shares', async () => {
-      await choose(1, 'prelude'); // 9/8 is not a Prelude's: back to Random
-      expect(query().get('time')).toBeNull();
-      await choose(3, '6/8');
+      await choose(1, 'prelude'); // a Prelude may be in 9/8 too
+      expect(query().get('time')).toBe('9/8');
+      await choose(3, '5/8');
       await choose(0, 'baroque');
       expect(menus()[1].value).toBe('invention');
-      expect(query().get('time')).toBeNull(); // an Invention is not in 6/8
+      expect(query().get('time')).toBeNull(); // an Invention is not in 5/8
       await choose(1, 'fugue');
       await choose(3, '6/8');
       expect(query().get('time')).toBe('6/8');
@@ -256,7 +275,7 @@ describe('App', () => {
 
     it('drops unapplied setting changes when switching back to sight reading, so the piece stays the same', async () => {
       await press('Ear training');
-      await select(1, 'gavotte');
+      await select(1, 'waltz');
       await press('Sight reading');
       expect(seed()).toBe('spec');
       expect(new URLSearchParams(location.search).get('form')).toBe('trio');
@@ -315,7 +334,7 @@ describe('App', () => {
       expect(params().get('seed')).not.toBe('spec');
       const c = params().get('c');
       expect(c).toBeTruthy();
-      expect(decodeCustomisation(c)).toEqual({ noteValues: ['semibreve', 'dottedMinim', 'minim', 'crotchet'] });
+      expect(decodeCustomisation(c)).toEqual({ noteValues: ['semibreve', 'dottedMinim', 'minim', 'dottedCrotchet', 'crotchet'] });
       expect(el.querySelector('.customise-toggle .dot')).not.toBeNull();
     });
 

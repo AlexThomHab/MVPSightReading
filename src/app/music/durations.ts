@@ -59,8 +59,14 @@ export function splitTicks(total: number): number[] {
   return out;
 }
 
+/**
+ * A tick count rounded to the grid every note value lies on (sixths of a semiquaver: halves for
+ * demisemiquavers, thirds for triplets), so sums of triplet lengths (4/3) stay exact.
+ */
+export const snapTicks = (x: number) => Math.round(x * 6) / 6;
+
 /** The total length of some notes. */
-export const totalTicks = (notes: readonly { ticks: number }[]) => notes.reduce((a, n) => a + n.ticks, 0);
+export const totalTicks = (notes: readonly { ticks: number }[]) => snapTicks(notes.reduce((a, n) => a + n.ticks, 0));
 
 /** Where each length starts, from 0: [4, 2, 2] → [0, 4, 6]. */
 export function starts(lengths: readonly number[]): number[] {
@@ -68,7 +74,7 @@ export function starts(lengths: readonly number[]): number[] {
   let at = 0;
   for (const t of lengths) {
     out.push(at);
-    at += t;
+    at = snapTicks(at + t);
   }
   return out;
 }

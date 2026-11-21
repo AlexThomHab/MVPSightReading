@@ -3,7 +3,7 @@
  * the choices the Key and Time menus offer for them.
  */
 import { Customisation, decodeCustomisation, encodeCustomisation, isDefault } from './music/constraints';
-import { FormId, formTimes, isFormId, keysFor } from './music/forms';
+import { FormId, availableForms, eraOf, formAvailable, formTimes, isFormId, keysFor } from './music/forms';
 import { GRADE_SPECS, Grade, TimeSignatureId, isGrade, isTimeSignatureId } from './music/grades';
 import { Settings } from './music/model';
 import { freshSeed } from './music/random';
@@ -44,6 +44,10 @@ export function settingsFromQuery(search: string): Settings {
     grade: isGrade(grade) ? grade : 1,
     form: isFormId(form) ? form : (legacy ?? 'minuet'),
   };
+  // A form the grade cannot write (an old link, an edited one) becomes one it can.
+  if (!formAvailable(settings.form, settings.grade)) {
+    settings.form = availableForms(eraOf(settings.form), settings.grade)[0] ?? (['galant', 'baroque', 'romantic'] as const).flatMap((e) => availableForms(e, settings.grade))[0];
+  }
   const custom = decodeCustomisation(params.get('c'));
   if (!isDefault(custom)) settings.custom = custom;
   const keyId = params.get('key');

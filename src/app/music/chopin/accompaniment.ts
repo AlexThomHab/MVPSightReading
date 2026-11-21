@@ -35,6 +35,10 @@ export function choosePattern(ctx: Ctx): Texture {
           : ([['broken', 1], ['bassChord', 1]] as [Texture, number][]);
     }
   })();
+  // In 5/8 and 7/8 the bar's groups of two and three quavers suit flowing quavers, not chords
+  // on a crotchet beat.
+  const usable = time.beatTicks === 2 && time.irregular ? options.filter(([t]) => t !== 'bassChord') : options;
+  options.splice(0, options.length, ...usable);
   // The user's note values and hand independence narrow the choice; with nothing that fits, held chords.
   const cons = ctx.cons;
   if (!cons) return rng.weighted(options, ([, w]) => w)[0];
@@ -53,7 +57,8 @@ function pattern(texture: Texture, at: number, ticks: number, ctx: Ctx, uppers: 
   const { time, grade } = ctx;
   const compound = time.compound || time.id === '3/8';
   const all = Array.from({ length: uppers + 1 }, (_, i) => i);
-  const held = (): LhEvent[] => halvesOf(ticks).map((t) => ({ parts: all.slice(0, 3), ticks: t }));
+  // (As many notes as the grade has in one hand: two, or three at Grade 8.)
+  const held = (): LhEvent[] => halvesOf(ticks).map((t) => ({ parts: all.slice(0, ctx.spec.features.chordNotes), ticks: t }));
   const cycle = (unit: number, order: number[]) => Array.from({ length: ticks / unit }, (_, i) => ({ parts: [order[i % order.length]], ticks: unit }));
   // Up through the chord and back: bass, middle, top, middle (compound beats: bass, middle, top).
   const sweep = uppers >= 2 ? (compound ? [0, 1, 2] : [0, 1, 2, 1]) : uppers === 1 ? [0, 1] : [0];
@@ -117,7 +122,8 @@ export function accompany(ctx: Ctx, form: Form, segments: Segment[][], bassLine:
     const bass = bassLine.pitches[b][k];
     const wide = texture === 'arpeggio';
     // Upper voices: two (three for the bass-and-chord pattern's chords in simple time, Grade 3+).
-    const count = texture === 'bassChord' && grade >= 3 && !ctx.time.compound && ctx.time.id !== '3/8' ? 3 : 2;
+    // (A three-note chord in one hand is a Grade 8 element.)
+    const count = texture === 'bassChord' && ctx.spec.features.chordNotes >= 3 && !ctx.time.compound && ctx.time.id !== '3/8' ? 3 : 2;
     // An arpeggio spreads to the octave (the tenth from Grade 4); chords stay within a tenth.
     const span = wide ? (grade >= 4 ? 9 : 7) : count === 3 ? 9 : 7;
     const ceiling = rhLow(b, s.at, s.ticks) - 1;
@@ -223,7 +229,7 @@ export function accompany(ctx: Ctx, form: Form, segments: Segment[][], bassLine:
   const passingVoice = (i: number, uppers: Pitch[], texture: Texture): { voice: number; pitch: Pitch } | null => {
     const { s, b } = flat[i];
     const next = flat[i + 1];
-    if (grade < 4 || !next || texture === 'final' || textureOf(next.b) === 'final' || ctx.cons?.accidentals === false) return null;
+    if (!ctx.spec.chromatic || !next || texture === 'final' || textureOf(next.b) === 'final') return null;
     if (next.b !== b && phraseStarts.has(next.b)) return null;
     if (s.ticks < 2 * ctx.time.beatTicks && !ctx.time.compound) return null;
     const after = uppersOf(i + 1);

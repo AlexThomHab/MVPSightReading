@@ -89,7 +89,7 @@ describe('scoring: checking the attempted bars', () => {
   });
 
   it('checks treble and bass apart, and a chorale stave against both its voices', () => {
-    const chorale = generatePiece({ seed: 'score', grade: 2, form: 'chorale' });
+    const chorale = generatePiece({ seed: 'score', grade: 5, form: 'chorale' });
     const t = emptyTranscription(chorale);
     // The soprano alone on the treble stave misses the alto.
     t.bars[1].rh = chorale.bars[1].voices!.s.map((x) => ({ ...x, fermata: undefined }));

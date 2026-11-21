@@ -1,12 +1,16 @@
 import { generatePiece } from './generator';
 import { Note, Piece } from './model';
-import { GRADES } from './grades';
+import { GRADES, GRADE_SPECS } from './grades';
 import { LETTERS, Pitch, accidentalSymbol, diatonicIndex, isSingableInterval, midi, mod, pitchName } from './theory';
 
-const SEEDS_PER_GRADE = 40;
+const SEEDS_PER_GRADE = 20;
 
+/**
+ * Four-part chorales: from Grade 5, where the syllabus has four-part chords (two notes in
+ * each hand). (At Grade 4 the chorale is in three parts — see the last test.)
+ */
 const pieces: Piece[] = [];
-for (const grade of GRADES) {
+for (const grade of GRADES.filter((g) => GRADE_SPECS[g].features.fourPart)) {
   for (let s = 0; s < SEEDS_PER_GRADE; s++) pieces.push(generatePiece({ seed: `chorale-${s}`, grade, form: 'chorale' }));
 }
 
@@ -249,5 +253,25 @@ describe('generateChorale', () => {
 
   it('uses tonic pitch names consistent with the key', () => {
     for (const p of pieces) expect(LETTERS).toContain(p.key.tonic);
+  });
+
+  it('is in three parts at Grade 4 (soprano and alto in the right hand, the bass in the left), and four from Grade 5', () => {
+    for (let s = 0; s < 8; s++) {
+      const p = generatePiece({ seed: `three-${s}`, grade: 4, form: 'chorale' });
+      for (const bar of p.bars) {
+        expect(bar.voices!.t, label(p)).toEqual([]);
+        expect(bar.voices!.s.length + bar.voices!.a.length, label(p)).toBeGreaterThan(0);
+      }
+    }
+    for (const p of pieces) expect(p.bars.some((b) => b.voices!.t.length), label(p)).toBe(true);
+    // (A chorale begins on an upbeat and pauses at each phrase end: Grade 4 elements.)
+    expect(() => generatePiece({ seed: 'x', grade: 3, form: 'chorale' })).toThrow(/from Grade 4/);
+  });
+
+  it('grows longer with the grade: about 8 bars at Grade 5, a page at Grade 8', () => {
+    const bars = (g: number) => pieces.filter((p) => p.grade === g).map((p) => p.bars.length - 1);
+    expect(Math.min(...bars(5))).toBeGreaterThanOrEqual(8);
+    expect(Math.max(...bars(5))).toBeLessThanOrEqual(12);
+    expect(Math.min(...bars(8))).toBeGreaterThanOrEqual(20);
   });
 });

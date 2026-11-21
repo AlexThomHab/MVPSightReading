@@ -27,6 +27,10 @@ export interface Note {
   grace?: Pitch[];
   /** An ornament sign over the note, with the neighbouring notes it uses when played. */
   ornament?: Ornament;
+  /** One of a triplet: three notes in the time of two (`ticks` is the real length, e.g. 4/3). */
+  triplet?: boolean;
+  /** A spread chord, rolled from the bottom up. */
+  spread?: boolean;
 }
 
 export interface Ornament {
@@ -43,13 +47,33 @@ export interface NoteRef {
   index: number;
 }
 
-export type DynamicMark = 'pp' | 'p' | 'mp' | 'mf' | 'f';
+export type DynamicMark = 'pp' | 'p' | 'mp' | 'mf' | 'f' | 'ff';
 
-/** Expressive markings attached to right-hand notes (used by the Chopin style). */
+/**
+ * A change of tempo from a note: `rit.` slows gradually to `factor` (of the marked tempo) by
+ * the next tempo mark or the end; `accel.` quickens gradually; a new tempo word (Più mosso,
+ * a tempo…) changes it at once.
+ */
+export interface TempoChange {
+  at: NoteRef;
+  text: string;
+  kind: 'rit' | 'accel' | 'set';
+  factor: number;
+}
+
+/** Expressive markings attached to right-hand notes (pedals: to left-hand notes). */
 export interface Expression {
   dynamics: { at: NoteRef; mark: DynamicMark }[];
   hairpins: { from: NoteRef; to: NoteRef; type: 'cresc' | 'dim' }[];
   slurs: { from: NoteRef; to: NoteRef }[];
+  /** rit., accel., a tempo, Più mosso… (Grade 5+). */
+  tempos?: TempoChange[];
+  /** The right pedal, down with the first left-hand note and up after the last (Grade 6+). */
+  pedals?: { from: NoteRef; to: NoteRef }[];
+  /** Una corda (soft pedal) from one right-hand note to another, then tre corde (Grade 7+). */
+  unaCorda?: { from: NoteRef; to: NoteRef }[];
+  /** 8va: right-hand notes written an octave below where they sound (Grade 7+). */
+  ottavas?: { from: NoteRef; to: NoteRef }[];
 }
 
 /** The four voices of a chorale: soprano and alto on the treble stave, tenor and bass on the bass stave. */
@@ -79,6 +103,8 @@ export interface Bar {
   lh: Note[];
   /** Present for chorales: all four voices. Bars may be shorter than the time signature (upbeat, final bar). */
   voices?: ChoraleVoices;
+  /** The left hand's clef when it is not the bass clef: a passage up in the treble (Grade 6+). */
+  lhClef?: 'treble';
 }
 
 /**
@@ -134,6 +160,13 @@ export interface Piece {
   upbeat?: number;
   /** How the form adapted to the user's customisation, if it had to. */
   notices?: string[];
+  /**
+   * 'grade': within the grade's ABRSM parameters. 'custom': the customisation goes beyond them
+   * (see `beyondGrade`), so the piece is not described as that grade.
+   */
+  difficulty?: 'grade' | 'custom';
+  /** What the customisation allows beyond the grade, in words. */
+  beyondGrade?: string[];
 }
 
 export interface Settings {

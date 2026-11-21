@@ -40,16 +40,17 @@ describe('CustomisePanelComponent', () => {
   it("starts at the grade's defaults, shown as pressed tiles", async () => {
     await render({}, 1);
     expect(el.textContent).toContain('Using the Grade 1 defaults');
-    // Grade 1: semibreve, dotted minim, minim and crotchet.
+    // Grade 1 (ABRSM): dotted minim, minim, crotchet and quaver — the semibreve comes at Grade 2.
     const pressed = [...el.querySelectorAll('.tiles')[0].querySelectorAll('button[aria-pressed="true"]')].map((b) => b.getAttribute('aria-label'));
-    expect(pressed).toEqual(['Semibreve (whole note)', 'Dotted minim (dotted half note)', 'Minim (half note)', 'Crotchet (quarter note)']);
+    expect(pressed).toEqual(['Dotted minim (dotted half note)', 'Minim (half note)', 'Crotchet (quarter note)', 'Quaver (eighth note)']);
+    expect(byLabel('Semibreve (whole note)').disabled).toBe(true);
     expect(byText('Reset to grade defaults').disabled).toBe(true);
   });
 
   it('overrides a setting when its control changes, keeping the rest at the defaults', async () => {
     await render({}, 1);
     await click(byLabel('Quaver (eighth note)'));
-    expect(last().noteValues).toEqual(['semibreve', 'dottedMinim', 'minim', 'crotchet', 'quaver']);
+    expect(last().noteValues).toEqual(['dottedMinim', 'minim', 'crotchet']);
     expect(Object.keys(last())).toEqual(['noteValues']);
     expect(el.querySelector('.badge')?.textContent).toContain('Custom');
     expect(el.textContent).toContain('Custom settings for Grade 1');

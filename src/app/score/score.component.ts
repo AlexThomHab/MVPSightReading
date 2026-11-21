@@ -16,7 +16,7 @@ import { isPlain } from '../music/durations';
 import { Pitch, diatonicIndex } from '../music/theory';
 import { BarBox, BarMarks, Drawing, ScoreView, drawPiece, loadVexFlow } from './engraving';
 import { DOT, FLAG_DOWN, FLAG_UP, REST, headFor } from './glyphs';
-import { InputTarget, TOP_LINE, elementAt, geometryOf, inputTargetAt, ledgerLines, yOf } from './hit-test';
+import { InputTarget, topLineOf, elementAt, geometryOf, inputTargetAt, ledgerLines, yOf } from './hit-test';
 
 /** A note or rest in the listener's transcription. */
 export interface NoteRefOnScore {
@@ -504,13 +504,14 @@ export class ScoreComponent {
       const y = top + (base === 16 ? 10 : 20);
       return { ...frame, x, y, glyph: REST[base] ?? REST[4], ledgers: [], stem: null, flag: null, dot: dotted ? { x: x + 16, y: top + 15 } : null };
     }
-    const y = yOf(t.staff, top, t.diatonic);
-    const up = t.diatonic < TOP_LINE[t.staff] - 4;
+    const y = yOf(t.staff, top, t.diatonic, g.lhClef);
+    const line = topLineOf(t.staff, g.lhClef);
+    const up = t.diatonic < line - 4;
     const head = headFor(base);
     const stemX = up ? x + 11.2 : x + 0.6;
     const stemEnd = up ? y - 35 : y + 35;
     const flags = up ? FLAG_UP : FLAG_DOWN;
-    const onLine = (TOP_LINE[t.staff] - t.diatonic) % 2 === 0;
+    const onLine = (line - t.diatonic) % 2 === 0;
     return {
       ...frame,
       x,
@@ -567,7 +568,7 @@ export class ScoreComponent {
       const top = m.staff === 'rh' ? g.rhTop : g.lhTop;
       const D = diatonicIndex(m.pitch);
       const head = headFor(m.ticks);
-      return [{ x, y: yOf(m.staff, top, D), glyph: head, ledgers: ledgerLines(m.staff, top, D) }];
+      return [{ x, y: yOf(m.staff, top, D, g.lhClef), glyph: head, ledgers: ledgerLines(m.staff, top, D, g.lhClef) }];
     });
   });
 

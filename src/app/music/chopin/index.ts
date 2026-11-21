@@ -29,7 +29,7 @@
  * and leaps) like every other form.
  */
 import { constraintsOf, effectiveSpec } from '../constraints';
-import { TIME_SIGNATURES, TimeSignatureId } from '../grades';
+import { TIME_SIGNATURES, TimeSignatureId, lengthsFor } from '../grades';
 import type { PhraseInfo, Piece, Settings } from '../model';
 import { homeKey } from '../pitch-class';
 import { Random } from '../random';
@@ -68,7 +68,7 @@ export function generateChopin(settings: Settings): Piece {
   // The left hand's one pattern is chosen first, so the melody can leave it room.
   ctx.pattern = choosePattern(ctx);
 
-  const barCount = rng.pick(spec.bars);
+  const barCount = rng.pick(lengthsFor(spec, 4));
   const form = planForm(ctx, barCount);
   const segments = planHarmony(ctx, form);
   const bassLine = planBass(ctx, form, segments);
@@ -111,7 +111,7 @@ function chooseTempo(ctx: Ctx): Piece['tempo'] {
   let { slow, fast, marking } = ctx.ch.tempo;
   // A prelude in a major key is gentler and moves on (Andantino), one in a minor key broods (Largo).
   if (ctx.character === 'prelude' && !ctx.minor) [slow, fast, marking] = [66, 80, 'Andantino'];
-  const crotchet = slow + ((fast - slow) * (ctx.grade - 1)) / 4 + ctx.rng.int(-3, 3);
+  const crotchet = slow + ((fast - slow) * (ctx.grade - 1)) / 7 + ctx.rng.int(-3, 3);
   const even = (n: number) => Math.round(n / 2) * 2;
   if (ctx.time.compound) return { bpm: even(crotchet * 0.62), beatUnit: 'qd', marking };
   if (ctx.time.id === '3/8') return { bpm: even(crotchet * 1.6), beatUnit: '8', marking };

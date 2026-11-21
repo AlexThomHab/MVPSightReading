@@ -4,7 +4,7 @@ import { Customisation, encodeCustomisation, isDefault } from './music/constrain
 import { Piece, Settings } from './music/model';
 import { GRADES, Grade, TimeSignatureId, isGrade, isTimeSignatureId } from './music/grades';
 import { freshSeed } from './music/random';
-import { ERAS, ERA_IDS, EraId, FORMS, FormId, eraOf, isEraId, isFormId } from './music/forms';
+import { ERAS, ERA_IDS, EraId, FORMS, FormId, availableForms, eraAvailable, eraMinGrade, eraOf, formAvailable, isEraId, isFormId, unavailableReason } from './music/forms';
 import { keyById, keyName } from './music/theory';
 import { keyChoices, sameSettings, settingsFromQuery, settingsToQuery, timeChoices } from './settings-link';
 import { CustomisePanelComponent } from './customise/customise-panel.component';
@@ -40,7 +40,12 @@ export class App {
   protected readonly check = inject(AnswerCheckState);
 
   protected readonly grades = GRADES;
-  protected readonly eras = ERA_IDS.map((id) => ERAS[id]);
+  /** The Era menu: every era, those the grade cannot write yet disabled (with the grade they start at). */
+  protected readonly eraOptions = computed(() =>
+    ERA_IDS.map((id) => ({ id, name: ERAS[id].name, available: eraAvailable(id, this.grade()), from: eraMinGrade(id) })),
+  );
+  /** Why the form changed by itself (a grade that cannot write it), until the next change. */
+  protected readonly formNotice = signal('');
 
   private readonly initial = settingsFromQuery(typeof location === 'undefined' ? '' : location.search);
   protected readonly seed = signal(this.initial.seed);
@@ -48,8 +53,10 @@ export class App {
   /** The form (which decides the era). */
   protected readonly form = signal<FormId>(this.initial.form);
   protected readonly era = computed<EraId>(() => eraOf(this.form()));
-  /** The Form menu: the chosen era's forms. */
-  protected readonly formOptions = computed(() => ERAS[this.era()].forms.map((id) => FORMS[id]));
+  /** The Form menu: the chosen era's forms, those beyond the grade disabled (with why). */
+  protected readonly formOptions = computed(() =>
+    ERAS[this.era()].forms.map((id) => ({ ...FORMS[id], available: formAvailable(id, this.grade()), reason: unavailableReason(id, this.grade()) })),
+  );
   /** '' means random within the grade. */
   protected readonly keyId = signal(this.initial.keyId ?? '');
   protected readonly timeId = signal<TimeSignatureId | ''>(this.initial.timeId ?? '');
@@ -129,7 +136,9 @@ export class App {
   protected readonly subtitle = computed(() => {
     const p = this.piece();
     const form = FORMS[p.form];
-    return [`Grade ${p.grade}`, ERAS[form.era].name, form.name, keyName(p.key), p.time.id, this.ear.active() ? `${p.bars.length} bars` : '']
+    // A customisation beyond the grade is not that grade: say so.
+    const level = p.difficulty === 'custom' ? `Custom difficulty (Grade ${p.grade}+)` : `Grade ${p.grade}`;
+    return [level, ERAS[form.era].name, form.name, keyName(p.key), p.time.id, this.ear.active() ? `${p.bars.length} bars` : '']
       .filter(Boolean)
       .join(' · ');
   });
@@ -195,17 +204,30 @@ export class App {
 
   protected setGrade(value: string): void {
     const grade = Number(value);
-    if (isGrade(grade)) this.grade.set(grade);
+    if (!isGrade(grade)) return;
+    this.grade.set(grade);
+    this.formNotice.set('');
+    // A form the new grade cannot write gives way to one it can — in the same era if there is one.
+    const form = this.form();
+    if (!formAvailable(form, grade)) {
+      // (Else the closest era for a melody: Classical / Galant, then Baroque.)
+      const next = availableForms(this.era(), grade)[0] ?? (['galant', 'baroque', 'romantic'] as const).flatMap((e) => availableForms(e, grade))[0];
+      this.setForm(next);
+      this.formNotice.set(`${unavailableReason(form, grade)!.replace(/\.$/, '')} — so Grade ${grade} has a ${FORMS[next].name} instead.`);
+    }
   }
 
-  /** Choosing an era chooses its first form. */
+  /** Choosing an era chooses its first form the grade can write. */
   protected setEra(value: string): void {
-    if (isEraId(value) && value !== this.era()) this.setForm(ERAS[value].forms[0]);
+    if (!isEraId(value) || value === this.era()) return;
+    const first = availableForms(value, this.grade())[0];
+    if (first) this.setForm(first);
   }
 
   /** A time signature the new form is not written in goes back to Random. */
   protected setForm(value: string): void {
-    if (!isFormId(value)) return;
+    if (!isFormId(value) || !formAvailable(value, this.grade())) return;
+    this.formNotice.set('');
     this.form.set(value);
     const time = this.timeId();
     if (time && !this.timeOptions().includes(time)) this.timeId.set('');

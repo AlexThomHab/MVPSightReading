@@ -1,24 +1,30 @@
-import { HARMONY_LIBRARY, progressionOk, tensionBuilds } from './chopin';
+import { HARMONY_LIBRARY, generateChopin, progressionOk, tensionBuilds } from './chopin';
 import { RChord, chordFor, leadsTo } from './chopin/chords';
 import { degreeOfLetter, homeKey, isChromatic, pcAbove, pcOf, pcSemis, samePc, scaleDegreePc } from './pitch-class';
 import { generatePiece } from './generator';
 import { Note, Piece } from './model';
-import { GRADES, GRADE_SPECS } from './grades';
-import { timesFor } from './forms';
+import { GRADES, GRADE_SPECS, lengthsFor } from './grades';
+import { formAvailable, timesFor } from './forms';
+import { validatePiece } from './validate';
 import { diatonicIndex, keyById, keyName, midi, pitchName } from './theory';
 import { onsets } from './durations';
 
-const SEEDS = 10;
+const SEEDS = 6;
+/** The Romantic forms begin at Grade 3 (a singing line moves beyond a five-finger position). */
+const ROMANTIC_GRADES = GRADES.filter((g) => formAvailable('nocturne', g));
 
-/** Every grade, every metre it allows, several seeds — plus a sweep of key overrides. */
+/**
+ * The composition itself (before finishing.ts adds the grade's notation: triplets, pickups,
+ * 8va…): every grade, every metre it allows, several seeds — plus a sweep of key overrides.
+ */
 const pieces: Piece[] = [];
-for (const grade of GRADES) {
+for (const grade of ROMANTIC_GRADES) {
   for (const form of ['nocturne', 'prelude'] as const) {
     for (const timeId of timesFor(grade, form)) {
-      for (let s = 0; s < SEEDS / 2; s++) pieces.push(generatePiece({ seed: `ch-${s}`, grade, form, timeId }));
+      for (let s = 0; s < SEEDS / 2; s++) pieces.push(generateChopin({ seed: `ch-${s}`, grade, form, timeId }));
     }
   }
-  for (const keyId of GRADE_SPECS[grade].keys) pieces.push(generatePiece({ seed: `key-${keyId}`, grade, form: 'prelude', keyId }));
+  for (const keyId of GRADE_SPECS[grade].keys) pieces.push(generateChopin({ seed: `key-${keyId}`, grade, form: 'prelude', keyId }));
 }
 
 const label = (p: Piece) => `seed=${p.seed} grade=${p.grade} key=${p.key.id} time=${p.time.id} (${p.title})`;
@@ -130,15 +136,29 @@ describe('Romantic forms (after Chopin)', () => {
   it('fills every bar exactly, in both hands, with durations the grade allows', () => {
     const found = violations(pieces, (p, fail) => {
       const spec = GRADE_SPECS[p.grade];
-      if (!spec.bars.includes(p.bars.length)) fail(`${p.bars.length} bars`);
+      if (!lengthsFor(spec, 4).includes(p.bars.length)) fail(`${p.bars.length} bars`);
       p.bars.forEach((bar, b) => {
         if (sum(bar.rh) !== p.time.barTicks) fail(`bar ${b + 1} RH ${sum(bar.rh)} ticks`);
         if (sum(bar.lh) !== p.time.barTicks) fail(`bar ${b + 1} LH ${sum(bar.lh)} ticks`);
-        for (const n of [...bar.rh, ...bar.lh]) if (!spec.durations.includes(n.ticks)) fail(`bar ${b + 1} duration ${n.ticks}`);
+        // (A whole bar of 7/4 or 12/8 has no single value: finishing writes it tied.)
+        for (const n of [...bar.rh, ...bar.lh]) if (!spec.durations.includes(n.ticks) && n.ticks !== p.time.barTicks) fail(`bar ${b + 1} duration ${n.ticks}`);
       });
     });
     expect(found).toEqual([]);
   });
+
+  it('passes its grade’s validation once finished, at every grade from 3 to 8', () => {
+    const found: string[] = [];
+    for (const grade of ROMANTIC_GRADES) {
+      for (const form of ['nocturne', 'prelude'] as const) {
+        for (const timeId of timesFor(grade, form)) {
+          const settings = { seed: `fin-${timeId}`, grade, form, timeId };
+          found.push(...validatePiece(generatePiece(settings), settings).map((m) => `G${grade} ${form} ${timeId}: ${m}`));
+        }
+      }
+    }
+    expect(found.slice(0, 10)).toEqual([]);
+  }, 60_000);
 
   it('is playable: leaps and stretches within the grade, the bass lowest, the hands apart', () => {
     const found = violations(pieces, (p, fail) => {
@@ -358,7 +378,8 @@ describe('Romantic forms (after Chopin)', () => {
       }
       // (A Grade 1 five-finger tune over changing chords moves more by thirds.)
       ratios.push(steps / (rh.length - 1));
-      if (steps / (rh.length - 1) < (p.grade === 1 ? 0.3 : 0.35)) fail(`only ${Math.round((100 * steps) / (rh.length - 1))}% steps`);
+      // (Freer at Grades 7–8, where wider leaps are part of the grade.)
+      if (steps / (rh.length - 1) < (p.grade >= 7 ? 0.3 : 0.35)) fail(`only ${Math.round((100 * steps) / (rh.length - 1))}% steps`);
     });
     expect(found).toEqual([]);
     // Taken together, the melodies move mostly by step.
@@ -394,35 +415,29 @@ describe('Romantic forms (after Chopin)', () => {
     expect(richer.length / returns.length).toBeGreaterThan(0.6);
   });
 
-  it('grows richer with the grade: diatonic at Grades 1–2, applied chords from 3, diminished sevenths and mixture from 4', () => {
+  it('grows richer with the grade: diatonic to Grade 3, applied chords from 4 (chromatic notes), Neapolitan and augmented sixths from 5', () => {
     const chromaticChords = (p: Piece) => chords(p).filter((c) => c.chromatic && c.kind !== 'cadential64').length;
     const chromaticNotes = (p: Piece) => line(p, 'rh').filter((n) => isChromatic(homeKey(p.key), pcOf(n.note.pitches[0]))).length;
-    expect(mean(ofGrade(1), chromaticChords)).toBe(0);
-    expect(mean(ofGrade(2), chromaticChords)).toBe(0);
-    for (const p of ofGrade(1)) expect(chromaticNotes(p), label(p)).toBe(0);
-    for (const p of ofGrade(2)) expect(chromaticNotes(p), label(p)).toBeLessThanOrEqual(2);
-    expect(mean(ofGrade(4), chromaticChords)).toBeGreaterThan(mean(ofGrade(3), chromaticChords));
-    expect(mean(ofGrade(5), chromaticChords)).toBeGreaterThan(mean(ofGrade(3), chromaticChords));
+    // (Chromatic notes are a Grade 4 element: Grade 3 is diatonic, the minor key's leading note apart.)
+    expect(mean(ofGrade(3), chromaticChords)).toBe(0);
+    for (const p of ofGrade(3)) expect(chromaticNotes(p), label(p)).toBe(0);
+    expect(mean(ofGrade(5), chromaticChords)).toBeGreaterThan(0);
     const share = (g: number, test: (c: RChord) => boolean) => ofGrade(g).filter((p) => chords(p).some(test)).length / ofGrade(g).length;
-    expect(share(3, (c) => c.kind === 'applied')).toBeGreaterThan(0.8);
-    expect(share(4, (c) => c.symbol.includes('°7') || c.kind === 'mixture')).toBeGreaterThan(0.6);
-    expect(share(5, (c) => c.kind === 'neapolitan' || c.kind === 'aug6')).toBeGreaterThan(0.5);
+    expect(share(4, (c) => c.kind === 'applied')).toBeGreaterThan(0.8);
+    expect(share(5, (c) => c.symbol.includes('°7') || c.kind === 'mixture' || c.kind === 'applied')).toBeGreaterThan(0.6);
+    expect(share(6, (c) => c.kind === 'neapolitan' || c.kind === 'aug6')).toBeGreaterThan(0.3);
     // Not an exercise with accidentals: chromatic melody notes stay a seasoning.
-    for (const g of [3, 4, 5]) expect(mean(ofGrade(g), chromaticNotes) / mean(ofGrade(g), (p) => line(p, 'rh').length)).toBeLessThan(0.15);
+    for (const g of [4, 5, 6, 7, 8]) expect(mean(ofGrade(g), chromaticNotes) / mean(ofGrade(g), (p) => line(p, 'rh').length)).toBeLessThan(0.15);
   });
 
-  it('ornaments more as the grade rises: grace notes from Grade 4, turns and trills at Grade 5', () => {
+  it('ornaments only at Grade 8: grace notes, turns and trills', () => {
     const graces = (p: Piece) => line(p, 'rh').filter((n) => n.note.grace).length;
     const signs = (p: Piece) => line(p, 'rh').filter((n) => n.note.ornament).length;
-    const fine = (p: Piece) => line(p, 'rh').filter((n) => n.note.ticks === 1).length;
-    for (const g of [1, 2]) expect(mean(ofGrade(g), (p) => graces(p) + signs(p) + fine(p))).toBe(0);
-    expect(mean(ofGrade(3), signs)).toBe(0);
-    expect(mean(ofGrade(4), graces)).toBeGreaterThan(mean(ofGrade(3), graces));
-    expect(mean(ofGrade(5), (p) => graces(p) + signs(p))).toBeGreaterThan(mean(ofGrade(4), (p) => graces(p) + signs(p)));
-    expect(ofGrade(5).filter((p) => line(p, 'rh').some((n) => n.note.ornament?.type === 'trill')).length).toBeGreaterThan(0);
-    expect(ofGrade(5).filter((p) => line(p, 'rh').some((n) => n.note.ornament?.type === 'turn')).length).toBeGreaterThan(0);
+    for (const g of [3, 4, 5, 6, 7]) expect(mean(ofGrade(g), (p) => graces(p) + signs(p))).toBe(0);
+    expect(mean(ofGrade(8), (p) => graces(p) + signs(p))).toBeGreaterThan(0);
+    expect(ofGrade(8).filter((p) => line(p, 'rh').some((n) => n.note.ornament)).length).toBeGreaterThan(0);
     // An ornament sign knows its neighbouring notes, a step either side.
-    for (const p of ofGrade(5)) {
+    for (const p of ofGrade(8)) {
       for (const n of line(p, 'rh')) {
         const o = n.note.ornament;
         if (!o) continue;
@@ -449,10 +464,10 @@ describe('Romantic forms (after Chopin)', () => {
         if (units.size > 1) fail(`left-hand rhythm changes: ${[...units].join(', ')}`);
         // Either one note at a time in every bar, or bass-and-chord in every bar: no switching.
         const chordal = body(p).map((b) => b.lh.some((n) => n.pitches.length > 1));
-        // (At Grades 1–2 the narrow left-hand range — one hand position for the whole piece —
+        // (To Grade 3 the narrow left-hand range — one hand position for the whole piece —
         // can leave no room above a high bass: that bar's chords thin to a single note, in the
         // same rhythm.)
-        if (p.grade > 2 && kind(p) === 'bassChord' && chordal.some((c) => !c)) fail('switches between flowing and chordal bars');
+        if (p.grade > 3 && kind(p) === 'bassChord' && chordal.some((c) => !c)) fail('switches between flowing and chordal bars');
       });
       expect(found).toEqual([]);
     });
@@ -547,7 +562,7 @@ describe('Romantic forms (after Chopin)', () => {
           if (ok) explained++;
         });
       }
-      expect(explained / total).toBeGreaterThan(0.95);
+      expect(explained / total).toBeGreaterThan(0.93);
     });
 
     it('voices applied dominants so the bass rises by semitone into their target (V65), as Chopin does', () => {

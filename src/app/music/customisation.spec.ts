@@ -12,7 +12,7 @@ import {
 import { generatePiece } from './generator';
 import { GRADE_SPECS, Grade } from './grades';
 import type { Note, Piece, Settings } from './model';
-import { FormId } from './forms';
+import { FormId, formAvailable } from './forms';
 import { keySignatureAlter, midi, pitchName } from './theory';
 import { onsets } from './durations';
 
@@ -34,6 +34,8 @@ function sample(base: Omit<Settings, 'seed'>, count = 12): { pieces: Piece[]; er
 }
 
 const notesOf = (p: Piece, hand: 'rh' | 'lh'): Note[] => p.bars.flatMap((b) => (b.voices ? (hand === 'rh' ? b.voices.s : b.voices.b) : b[hand]));
+/** A chord's top note: the melody (finishing may add a note below it). */
+const top = (n: Note) => n.pitches[n.pitches.length - 1];
 const melody = (p: Piece) => notesOf(p, 'rh').filter((n) => !n.rest);
 
 describe('customisation: settings and validation', () => {
@@ -42,7 +44,8 @@ describe('customisation: settings and validation', () => {
     expect([...c.noteTicks].sort()).toEqual([4, 8]);
     expect(c.maxLeap).toBe(2);
     expect(c.times).toEqual(GRADE_SPECS[2].times);
-    expect(c.restTicks).toEqual([]);
+    // (Rests: the grade's own — minim, crotchet and, from Grade 2, dotted minim and semibreve rests.)
+    expect(c.restTicks).toEqual(GRADE_SPECS[2].rests);
     // Changing the grade keeps the user's choices.
     expect([...resolveConstraints(5, { noteValues: ['crotchet', 'minim'] }).noteTicks].sort()).toEqual([4, 8]);
   });
@@ -54,7 +57,7 @@ describe('customisation: settings and validation', () => {
         .map((i) => i.message);
     expect(errors(1, 'trio', { noteValues: [] })[0]).toMatch(/at least one note value/);
     expect(errors(3, 'trio', { noteValues: ['minim'] }, '3/4')[0]).toMatch(/can't be made of minim/);
-    expect(errors(3, 'chorale', { noteValues: ['minim', 'quaver'] })[0]).toMatch(/Chorales move in crotchets/);
+    expect(errors(4, 'chorale', { noteValues: ['minim', 'quaver'] })[0]).toMatch(/Chorales move in crotchets/);
     expect(errors(1, 'trio', { melodyRange: { low: 'C4', high: 'E4' } })[0]).toMatch(/at least a fifth/);
     expect(errors(1, 'trio', { melodyRange: { low: 'G4', high: 'B4' } })[0]).toMatch(/at least a fifth/);
     expect(errors(3, 'trio', { melodyRange: { low: 'D4', high: 'B4' } }).join(' ')).not.toMatch(/tonic/);
@@ -85,7 +88,7 @@ describe('customisation: every setting shapes the music', { timeout: 60_000 }, (
     const custom: Customisation = { noteValues: ['crotchet', 'minim', 'dottedMinim', 'semibreve'], restValues: ['crotchet'] };
     let rests = 0;
     for (const form of PIANO) {
-      for (const grade of [1, 3, 5] as Grade[]) {
+      for (const grade of ([1, 3, 5] as Grade[]).filter((g) => formAvailable(form, g))) {
         const { pieces, errors } = sample({ grade, form, custom }, 6);
         expect(errors, `${form} G${grade}`).toEqual([]);
         for (const p of pieces) {
@@ -137,7 +140,7 @@ describe('customisation: every setting shapes the music', { timeout: 60_000 }, (
       expect(pieces.length, `${form}: ${errors[0]}`).toBeGreaterThan(3);
       for (const p of pieces) {
         const m = melody(p);
-        for (let i = 1; i < m.length; i++) expect(intervalSize(m[i - 1].pitches[0], m[i].pitches[0]), form).toBeLessThanOrEqual(2);
+        for (let i = 1; i < m.length; i++) expect(intervalSize(top(m[i - 1]), top(m[i])), form).toBeLessThanOrEqual(2);
       }
     }
   });
@@ -151,7 +154,7 @@ describe('customisation: every setting shapes the music', { timeout: 60_000 }, (
         const m = melody(p);
         for (let i = 1; i < m.length; i++) {
           if (m[i - 1].tie) continue;
-          expect([1, 2, 4], `${form} ${pitchName(m[i - 1].pitches[0])}–${pitchName(m[i].pitches[0])}`).toContain(intervalSize(m[i - 1].pitches[0], m[i].pitches[0]));
+          expect([1, 2, 4], `${form} ${pitchName(top(m[i - 1]))}–${pitchName(top(m[i]))}`).toContain(intervalSize(top(m[i - 1]), top(m[i])));
         }
       }
     }
@@ -188,7 +191,7 @@ describe('customisation: every setting shapes the music', { timeout: 60_000 }, (
   });
 
   it('keeps the hands together (shared attack points), or makes them independent, as asked', () => {
-    for (const form of ['trio', 'gavotte', 'prelude'] as FormId[]) {
+    for (const form of ['trio', 'minuet', 'prelude'] as FormId[]) {
       for (const p of sample({ grade: 3, form, custom: { independence: 'together' } }, 5).pieces) {
         for (const bar of p.bars) {
           const rh = new Set(onsets(bar.rh));
@@ -196,10 +199,12 @@ describe('customisation: every setting shapes the music', { timeout: 60_000 }, (
         }
       }
     }
-    // Fully independent: even at Grade 1 the left hand moves on its own.
+    // Fully independent: even at Grade 2 the left hand moves on its own — beyond the grade,
+    // so only with Beyond the grade switched on (otherwise held to the grade).
     const busy = (custom: Customisation) =>
       sample({ grade: 2, form: 'trio', custom }, 8).pieces.reduce((a, p) => a + notesOf(p, 'lh').length / p.bars.length, 0);
-    expect(busy({ independence: 'full' })).toBeGreaterThan(busy({}) * 1.5);
+    expect(busy({ independence: 'full', advanced: true })).toBeGreaterThan(busy({}) * 1.5);
+    expect(busy({ independence: 'full' })).toBeLessThan(busy({ independence: 'full', advanced: true }));
   });
 
   it('makes rhythm busier as rhythmic difficulty rises, within the same note values', () => {
@@ -214,8 +219,10 @@ describe('customisation: every setting shapes the music', { timeout: 60_000 }, (
 
   it('writes syncopations only when they are allowed', () => {
     const syncopated = (p: Piece) => p.bars.some((b) => onsets(b.rh).some((t, i) => t % 4 === 2 && b.rh[i].ticks >= 4 && !b.rh[i].rest));
-    const custom: Customisation = { noteValues: ['crotchet', 'quaver', 'minim'], syncopation: true, rhythmicDifficulty: 'difficult' };
+    // (Syncopation is a Grade 5 element: at Grade 3 it needs Beyond the grade.)
+    const custom: Customisation = { noteValues: ['crotchet', 'quaver', 'minim'], syncopation: true, rhythmicDifficulty: 'difficult', advanced: true };
     expect(sample({ grade: 3, form: 'trio', custom }, 10).pieces.some(syncopated)).toBe(true);
+    expect(sample({ grade: 3, form: 'trio', custom: { ...custom, advanced: undefined } }, 10).pieces.some(syncopated)).toBe(false);
     expect(sample({ grade: 3, form: 'trio', custom: { ...custom, syncopation: false } }, 10).pieces.some(syncopated)).toBe(false);
   });
 
@@ -270,7 +277,7 @@ describe('customisation: the practice sessions on the card', { timeout: 60_000 }
       expect(pieces.length, `${form}: ${errors[0]}`).toBeGreaterThan(5);
       for (const p of pieces) {
         const m = melody(p);
-        for (let i = 1; i < m.length; i++) expect(intervalSize(m[i - 1].pitches[0], m[i].pitches[0])).toBeLessThanOrEqual(3);
+        for (let i = 1; i < m.length; i++) expect(intervalSize(top(m[i - 1]), top(m[i]))).toBeLessThanOrEqual(3);
       }
     }
   });
@@ -292,7 +299,7 @@ describe('customisation: sharing and defaults', { timeout: 60_000 }, () => {
     expect(
       sanitiseCustomisation({
         noteValues: ['crotchet', 'breve', 4, 'crotchet'],
-        timeSignatures: ['3/4', 'toString', '5/4'],
+        timeSignatures: ['3/4', 'toString', '11/8'],
         melodyRange: { low: 'C4', high: 'H9' },
         maxLeap: 99,
         independence: 'sometimes',
@@ -307,7 +314,8 @@ describe('customisation: sharing and defaults', { timeout: 60_000 }, () => {
   it("shows a grade's default range as absolute notes (in C major)", () => {
     expect(defaultRange(1, 'melody')).toEqual({ low: 'C4', high: 'G4' });
     expect(defaultRange(3, 'melody')).toEqual({ low: 'A3', high: 'C5' });
-    expect(defaultRange(2, 'bass')).toEqual({ low: 'G2', high: 'G3' });
+    // (Grades 1–2: a five-finger position, tonic to dominant.)
+    expect(defaultRange(2, 'bass')).toEqual({ low: 'C3', high: 'G3' });
   });
 
   it('writes in major keys only when accidentals are off (a minor key needs its raised leading note)', () => {

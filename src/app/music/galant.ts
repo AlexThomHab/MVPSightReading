@@ -15,6 +15,7 @@ import {
   TIME_SIGNATURES,
   TimeSignature,
   TimeSignatureId,
+  lengthsFor,
 } from './grades';
 import type { Bar, Cadence, Harmony, Note, Piece, SequenceName, Settings, Tempo } from './model';
 import { Random } from './random';
@@ -41,7 +42,7 @@ import {
   mod,
   tonicSymbol,
 } from './theory';
-import { splitTicks, starts } from './durations';
+import { snapTicks, splitTicks, starts } from './durations';
 
 export function generateGalant(settings: Settings): Piece {
   const { seed, grade, form: formId } = settings;
@@ -53,7 +54,8 @@ export function generateGalant(settings: Settings): Piece {
 
   const key = chooseKey(rng, spec, settings.keyId);
   const time = TIME_SIGNATURES[settings.timeId ?? chooseTime(rng, formTimes(formId, spec.times))];
-  const barCount = rng.pick(spec.bars);
+  // Four-bar phrases, as many as the grade's length asks for.
+  const barCount = rng.pick(lengthsFor(spec, 4));
 
   const ctx: Ctx = { rng, spec, style, key, time, grade, cons };
   const phrases = planPhrases(ctx, barCount);
@@ -139,7 +141,7 @@ function chooseTime(rng: Random, metres: readonly TimeSignatureId[]): TimeSignat
 
 function chooseTempo(rng: Random, grade: Grade, style: GalantFormSpec, time: TimeSignature): Tempo {
   const [slow, fast] = style.crotchetBpm;
-  const crotchet = slow + ((fast - slow) * (grade - 1)) / 4 + rng.int(-4, 4);
+  const crotchet = slow + ((fast - slow) * (grade - 1)) / 7 + rng.int(-4, 4);
   const even = (n: number) => Math.round(n / 2) * 2;
   const marking = style.tempoMarking;
   if (time.compound) return { bpm: even(crotchet * 0.58), beatUnit: 'qd', marking };
@@ -187,17 +189,18 @@ function withUpbeat(bars: Bar[], time: TimeSignature, upbeat: number): Bar[] {
     bars.forEach((bar) =>
       bar[hand].forEach((n) => {
         let at = t;
-        const end = t + n.ticks;
+        const end = snapTicks(t + n.ticks);
         while (at < end) {
           const [k] = place(at);
-          const piece = Math.min(end, bounds(k)[1]) - at;
+          const piece = snapTicks(Math.min(end, bounds(k)[1]) - at);
           if (piece <= 0) throw new Error('A bar is longer than its time signature');
-          const parts = splitTicks(piece);
+          // (A note that is not split keeps its length — a triplet quaver has no single value of its own.)
+          const parts = Math.abs(piece - n.ticks) < 1e-6 ? [n.ticks] : splitTicks(piece);
           parts.forEach((ticks, j) => {
             const last = at + piece >= end && j === parts.length - 1;
             out[k][hand].push(n.rest ? { pitches: [], ticks, rest: true } : { ...n, pitches: n.pitches.map((p) => ({ ...p })), ticks, tie: last ? n.tie : true });
           });
-          at += piece;
+          at = snapTicks(at + piece);
         }
         t = end;
       }),
@@ -460,14 +463,34 @@ function planPhrases(ctx: Ctx, barCount: number): Phrase[] {
 
   if (barCount === 8) return [opening, answer(4, 'PAC')];
 
-  // 12 bars: A – A' (deceptive cadence) – a riposte to the final cadence, or A – B (a sequence) – A'.
-  const continuation = CONTINUATION[mode].map(adapt).some(Boolean);
-  if (continuation && available({ symbol: mode === 'major' ? 'vi' : 'VI' }) && rng.chance(0.5)) {
-    return [opening, answer(4, 'DC'), phrase('continuation', 8, choose(CONTINUATION[mode]))];
+  /** A contrasting phrase (a sequence, or a Prinner or Ponte) unlike the opening and the last contrast. */
+  let lastContrast: SequenceName | undefined = opening.sequence?.name;
+  const contrast = (startBar: number): Phrase => {
+    const options = CONTRAST[mode].filter((t) => !t.sequence || t.sequence.name !== lastContrast);
+    const usable = options.map(adapt).some(Boolean) ? options : CONTRAST[mode];
+    const p = phrase('contrast', startBar, choose(usable));
+    lastContrast = p.sequence?.name ?? lastContrast;
+    return p;
+  };
+
+  // The first section: A – A' (deceptive cadence) – a riposte to the final cadence (12 bars),
+  // or A – B (a sequence) – A', or (an even number of phrases) A – A'.
+  const phrases: Phrase[] = [];
+  const count = barCount / 4;
+  if (count % 2 === 1) {
+    const continuation = CONTINUATION[mode].map(adapt).some(Boolean);
+    if (continuation && available({ symbol: mode === 'major' ? 'vi' : 'VI' }) && rng.chance(0.5)) {
+      phrases.push(opening, answer(4, 'DC'), phrase('continuation', 8, choose(CONTINUATION[mode])));
+    } else {
+      phrases.push(opening, contrast(4), answer(8, 'PAC'));
+    }
+  } else {
+    phrases.push(opening, answer(4, 'PAC'));
   }
-  // The middle phrase should not reuse the opening's sequence.
-  const contrast = CONTRAST[mode].filter((t) => !t.sequence || t.sequence.name !== opening.sequence?.name);
-  return [opening, phrase('contrast', 4, choose(contrast)), answer(8, 'PAC')];
+  // Longer pieces (Grades 5–8) go on in rounded binary: a contrast, then the opening's return,
+  // as often as the length asks — A A' | B A' | B' A' …
+  while (phrases.length < count) phrases.push(contrast(phrases.length * 4), answer((phrases.length + 1) * 4, 'PAC'));
+  return phrases;
 }
 
 // ---------------------------------------------------------------------------
@@ -767,9 +790,11 @@ function buildMelody(ctx: Ctx, phrases: Phrase[], segments: Segment[][], rhythms
     (!slot.strong || isChordTone(slot.chord, d)) &&
     (slot.stepTo === undefined || Math.abs(d - slot.stepTo) === 1) &&
     // The schema's note, where it asks for one (relaxed only as a last resort).
-    (slot.goal === undefined || relax >= 3 || mod(d, 7) === slot.goal) &&
-    // An imperfect authentic cadence ends on mi or sol, not do.
-    (slot.cadence !== 'IAC' || [2, 4].includes(mod(d, 7)));
+    (slot.goal === undefined || (relax >= 3 && !slot.cadence) || relax >= 4 || mod(d, 7) === slot.goal) &&
+    // An imperfect authentic cadence ends on mi or sol, not do; a perfect one on do (also
+    // mid-piece, where a rounded binary form's sections close).
+    (slot.cadence !== 'IAC' || [2, 4].includes(mod(d, 7))) &&
+    (slot.cadence !== 'PAC' || mod(d, 7) === 0);
 
   const candidates = (slot: Slot): MelodyNote[] => {
     if (slot.fixed !== undefined) return [spell(slot, slot.fixed)];
@@ -787,10 +812,8 @@ function buildMelody(ctx: Ctx, phrases: Phrase[], segments: Segment[][], rhythms
   // still lead into `tail`?", memoised, so the main search below never walks into a dead
   // end (for example a repeated opening bar that cannot reach the final cadence). It
   // writes trial notes into `notes` so that sequence copies can read their model notes.
-  const repeated = phrases.find((p) => p.repeatsOpening);
-  /** First freely generated slot of the repeated phrase, after its copied opening, and its end. */
-  const repeatStart = repeated ? barStart[repeated.startBar + 2] : -1;
-  const repeatEnd = repeated ? phraseEnd[phrases.indexOf(repeated)] : -1;
+  /** Each phrase that repeats the opening: its first freely generated slot (after the copied opening) and its end. */
+  const repeatSpans = phrases.flatMap((p, pi) => (p.repeatsOpening ? [{ start: barStart[p.startBar + 2], end: phraseEnd[pi] }] : []));
   const openingTail = (): MelodyNote[] => [notes[0], notes[1]].filter(Boolean);
   /** Phrase-final slot → the following freshly generated phrase it must be able to lead into. */
   const leadsInto = new Map<number, { from: number; to: number; tail: () => MelodyNote[] }>();
@@ -866,7 +889,7 @@ function buildMelody(ctx: Ctx, phrases: Phrase[], segments: Segment[][], rhythms
       if (!transitionOk(p2, p1, c, relax)) return false;
       if (!copiesWork(i, c)) return false;
       // The repeat of bar 2 is followed by a different chord and cadence than in the opening.
-      if (slot.endsRepeatedOpening && repeatStart >= 0 && !complete(repeatStart, repeatEnd, p1, c, [])) return false;
+      if (slot.endsRepeatedOpening && !repeatSpans.every((r) => complete(r.start, r.end, p1, c, []))) return false;
       // A phrase must be able to lead into the freshly generated phrase after it.
       if (next && !complete(next.from, next.to, p1, c, next.tail())) return false;
       return true;
@@ -965,18 +988,29 @@ interface LhEvent {
 /** Two roughly equal halves of a bar, as representable durations. */
 function halves(time: TimeSignature): [number, number] {
   switch (time.id) {
-    case '4/4': return [8, 8];
-    case '3/4': return [8, 4];
-    case '2/4': return [4, 4];
-    case '6/8': return [6, 6];
     case '3/8': return [4, 2];
     case '9/8': return [12, 6];
+    default: {
+      const h = harmonySplit(time)!;
+      return [h, time.barTicks - h];
+    }
   }
 }
 
-/** One long note filling the bar where possible (9/8 needs two). */
-function wholeBar(time: TimeSignature): number[] {
-  return time.id === '9/8' ? [12, 6] : [time.barTicks];
+/**
+ * One long note filling the bar where the grade has such a note (a semibreve only from Grade 2;
+ * 9/8 needs two), else the longest the grade allows and what is left (rests, or tied).
+ */
+function wholeBar(time: TimeSignature, durations: readonly number[]): number[] {
+  if (durations.includes(time.barTicks)) return [time.barTicks];
+  const out: number[] = [];
+  let left = time.barTicks;
+  while (left > 0) {
+    const d = [...durations].sort((a, b) => b - a).find((x) => x <= left) ?? left;
+    out.push(d);
+    left -= d;
+  }
+  return out;
 }
 
 function chooseLhKind(ctx: Ctx, time: TimeSignature): LhKind {
@@ -1001,7 +1035,7 @@ function chooseLhKind(ctx: Ctx, time: TimeSignature): LhKind {
 }
 
 /** The accompaniment pattern for a whole bar with one chord. */
-function barEvents(kind: LhKind, time: TimeSignature, rng: Random): LhEvent[] {
+function barEvents(kind: LhKind, time: TimeSignature, rng: Random, durations: readonly number[]): LhEvent[] {
   const [h1, h2] = halves(time);
   const repeat = (pattern: LhEvent[], times: number) => Array.from({ length: times }, () => pattern).flat();
   const quavers = (cycle: number[]) =>
@@ -1009,11 +1043,11 @@ function barEvents(kind: LhKind, time: TimeSignature, rng: Random): LhEvent[] {
   const other = rng.pick([4, 2, -3]);
   switch (kind) {
     case 'long':
-      return wholeBar(time).map((ticks, i) => ({ offs: [i === 0 ? 0 : 4], ticks }));
+      return wholeBar(time, durations).map((ticks, i) => ({ offs: [i === 0 ? 0 : 4], ticks }));
     case 'split':
       return [{ offs: [0], ticks: h1 }, { offs: [other], ticks: h2 }];
     case 'dyad':
-      return wholeBar(time).map((ticks) => ({ offs: [0, rng.chance(0.6) ? 4 : 2], ticks }));
+      return wholeBar(time, durations).map((ticks) => ({ offs: [0, rng.chance(0.6) ? 4 : 2], ticks }));
     case 'dyadSplit':
       return [{ offs: [0, 4], ticks: h1 }, { offs: rng.pick([[2, 4], [0, 2]]), ticks: h2 }];
     case 'polonaise':
@@ -1199,13 +1233,13 @@ function buildLeftHand(ctx: Ctx, segmentsByBar: Segment[][]): Note[][] {
 
     if (seg.bar === n - 1) {
       // Final bar: the tonic, held (once, under both chords of a closing Quiescenza).
-      if (seg.at === 0) wholeBar(time).forEach((ticks, k) => bars[seg.bar].push(note(k === 0 ? [r] : [], ticks)));
+      if (seg.at === 0) wholeBar(time, ctx.spec.durations).forEach((ticks, k) => bars[seg.bar].push(note(k === 0 ? [r] : [], ticks)));
       return;
     }
     if (seg.pedal) {
       // Over the pedal: the held tonic, with the chord's nearest two notes above it.
       const above: number[] = [];
-      for (let d = r + 1; d <= hi && above.length < 2; d++) if (chordTones(chord).includes(mod(d, 7)) && allowed(chord, d)) above.push(d);
+      for (let d = r + 1; d <= hi && above.length < ctx.spec.features.chordNotes - 1; d++) if (chordTones(chord).includes(mod(d, 7)) && allowed(chord, d)) above.push(d);
       bars[seg.bar].push(note([r, ...above], seg.ticks));
       return;
     }
@@ -1213,7 +1247,7 @@ function buildLeftHand(ctx: Ctx, segmentsByBar: Segment[][]): Note[][] {
       for (const d of walkingBass(i, seg.ticks / 4)) bars[seg.bar].push(note([d], 4));
       return;
     }
-    const events = seg.whole ? barEvents(seg.kind, time, rng) : halfBarEvents(seg.kind, seg.ticks, time, rng);
+    const events = seg.whole ? barEvents(seg.kind, time, rng, ctx.spec.durations) : halfBarEvents(seg.kind, seg.ticks, time, rng);
     const realised: number[][] = [];
     events.forEach((e, k) => {
       // Notes above the bass stay above it (dropped if out of range), so inversions survive;

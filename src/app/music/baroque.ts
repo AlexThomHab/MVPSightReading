@@ -27,6 +27,7 @@ import { cellUnit, fillWithCells, harmonySplit, rhythmPreferences } from './rhyt
 import { formTimes } from './forms';
 import { KEYS, Key, Pitch, degreeToPitch, isSingableInterval, keyName, keySignatureAlter, midi, mod } from './theory';
 import { splitTicks, starts } from './durations';
+import { restsFor } from './rests';
 
 export type BaroqueFormId = 'invention' | 'fugue';
 export const isBaroqueForm = (id: string): id is BaroqueFormId => id === 'invention' || id === 'fugue';
@@ -92,8 +93,15 @@ interface Ctx {
   win: Record<Hand, [number, number]>;
   /** Accidentals outside the key may be written (modulating entries). */
   chromatic: boolean;
-  /** Whole-bar rests may be written (a customisation may not allow them). */
-  restOk: boolean;
+  /** A bar's rest in the values the grade (or customisation) writes, or null if it has none. */
+  restBar: number[] | null;
+  /**
+   * Grade 1: the hands play one at a time — the imitation passes between them, the other hand
+   * resting — as the syllabus's Grade 1 asks.
+   */
+  alone: boolean;
+  /** Ties may be written (Grade 2). */
+  ties: boolean;
   plan: BarPlan[];
 }
 
@@ -121,13 +129,13 @@ function compose(settings: Settings, attempt: number): Piece {
   const key = settings.keyId ? (KEYS.find((k) => k.id === settings.keyId) ?? pickKey(rng, spec)) : pickKey(rng, spec);
   const metres = formTimes(form, spec.times);
   const time = TIME_SIGNATURES[settings.timeId ?? rng.weighted(metres, (t: TimeSignatureId) => (t === metres[0] ? 2 : 1))];
+  // (Counterpoint can be any length: episodes stretch or shrink.)
   const barCount = rng.pick(spec.bars);
 
   const rhWin = pitchWindow(key, spec.rhRange, { letter: 'A', alter: 0, octave: 3 }, { letter: 'A', alter: 0, octave: 5 }, cons?.melodyRange ?? null);
   const lhWin = pitchWindow(key, spec.lhRange, { letter: 'E', alter: 0, octave: 2 }, { letter: 'D', alter: 0, octave: 4 }, cons?.bassRange ?? null);
   if (!rhWin || !lhWin) throw new Error('The ranges do not contain the tonic');
   const abs = (w: { tonicOctave: number; lo: number; hi: number }): [number, number] => [7 * w.tonicOctave + w.lo, 7 * w.tonicOctave + w.hi];
-  const restTicks = splitTicks(time.barTicks);
   const ctx: Ctx = {
     rng,
     spec,
@@ -138,7 +146,9 @@ function compose(settings: Settings, attempt: number): Piece {
     form,
     win: { rh: abs(rhWin), lh: abs(lhWin) },
     chromatic: spec.chromatic,
-    restOk: !cons || restTicks.every((t) => cons.restTicks.includes(t)),
+    restBar: restsFor(time.barTicks, cons?.restTicks ?? spec.rests),
+    alone: !spec.features.handsTogether,
+    ties: cons ? cons.ties : spec.features.ties,
     plan: [],
   };
   // The hands must not share their whole range, or the parts could not stay apart.
@@ -159,14 +169,18 @@ function pickKey(rng: Random, spec: GradeSpec): Key {
 // The plan: sections, keys and chords
 // ---------------------------------------------------------------------------
 
+/** Sharps (or, negative, flats) of a key: its tonic's place on the circle of fifths. */
+const CIRCLE: Record<string, number> = { F: -1, C: 0, G: 1, D: 2, A: 3, E: 4, B: 5 };
+
 /** A key related to the home key: its tonic `shift` degrees above, in `mode`. */
 function related(home: Key, shift: number, mode: Key['mode']): Local {
   if (shift === 0) return { key: home, shift };
   const tonic = degreeToPitch(home, 4, shift);
-  // The dominant has one more sharp; the relative shares the key signature.
-  const fifths = home.fifths + (mod(shift, 7) === 4 ? 1 : 0);
+  const fifths = CIRCLE[tonic.letter] + 7 * tonic.alter - (mode === 'minor' ? 3 : 0);
   return { key: { id: '', tonic: tonic.letter, tonicAlter: tonic.alter, mode, fifths }, shift };
 }
+
+
 
 function planSections(ctx: Ctx, n: number): Section[] {
   const { rng, grade, key, form, chromatic } = ctx;
@@ -174,6 +188,11 @@ function planSections(ctx: Ctx, n: number): Section[] {
   const minor = key.mode === 'minor';
   const dominant = related(key, 4, key.mode);
   const relative = minor ? related(key, 2, 'major') : related(key, 5, 'minor');
+  // The keys middle entries visit, in turn: the relative, the dominant, the subdominant, and
+  // (major) the supertonic minor or (minor) the submediant.
+  const visits = minor
+    ? [relative, dominant, related(key, 3, 'minor'), related(key, 5, 'major')]
+    : [relative, dominant, related(key, 3, 'major'), related(key, 1, 'minor')];
   const fugue = form === 'fugue';
   // Inventions mostly begin in the right hand; from Grade 4 either hand may.
   const h0: Hand = grade >= 4 && rng.chance(0.3) ? 'lh' : 'rh';
@@ -196,16 +215,33 @@ function planSections(ctx: Ctx, n: number): Section[] {
         ? entry('entry', 'Entry', home, lead, lead === h1 ? 4 : 0)
         : entry('entry', 'Entry (on the dominant)', home, lead, 4)
       : entry('entry', `Middle entry (${keyName(local.key)})`, local, lead, local.shift);
-  if (n === 8) {
-    out.push(episode(2, h0), middle(chromatic ? relative : home, h0), entry('final', 'Final entry', home, h1, 0));
-  } else if (n >= 12) {
-    out.push(
-      episode(2, h0),
-      middle(chromatic ? relative : home, h0),
-      middle(chromatic ? dominant : home, h1),
-      episode(n - 9, h0),
-      entry('final', 'Final entry', home, h0, 0),
-    );
+  // Between the exposition (subject, answer) and the close (final entry, cadence): episodes
+  // and middle entries, as many as the length allows.
+  //    4 bars: S A | cadence        6: S A E E | cadence       7: S A E E F | cadence
+  //    8 bars: S A E E M F | cadence        12: S A E E M M E E E F | cadence
+  //   16–24 bars: further episodes and pairs of entries, each pair in the next related key.
+  if (n === 5) out.push(episode(1, h0));
+  else if (n === 6) out.push(episode(2, h0));
+  else if (n === 7) out.push(episode(2, h0), entry('final', 'Final entry', home, h1, 0));
+  else if (n === 8) out.push(episode(2, h0), middle(chromatic ? relative : home, h0), entry('final', 'Final entry', home, h1, 0));
+  else if (n >= 9) {
+    let left = n - 5; // less the exposition, the final entry and the cadence
+    let visit = 0;
+    let first = true;
+    while (left > 0) {
+      // An episode, then (if there is room for one after it) a pair of entries in the next key.
+      const length = first ? 2 : left >= 6 ? 3 : Math.min(left, 3);
+      out.push(episode(Math.min(length, left), h0));
+      left -= Math.min(length, left);
+      first = false;
+      if (left >= 3) {
+        const local = chromatic ? visits[visit % visits.length] : home;
+        out.push(middle(local, h0), middle(local, h1));
+        visit++;
+        left -= 2;
+      }
+    }
+    out.push(entry('final', 'Final entry', home, h0, 0));
   }
   out.push(cadence);
 
@@ -492,7 +528,7 @@ function fill(ctx: Ctx, f: Fill): number[] | null {
 // ---------------------------------------------------------------------------
 
 /** Notes per beat across both hands that each grade reads comfortably. */
-const DENSITY: Record<Grade, number> = { 1: 1.7, 2: 2.2, 3: 2.8, 4: 3.4, 5: 3.9 };
+const DENSITY: Record<Grade, number> = { 1: 1.7, 2: 2.2, 3: 2.8, 4: 3.2, 5: 3.5, 6: 3.8, 7: 4.1, 8: 4.4 };
 
 /**
  * A rhythm from `from` to `to` (ticks, on beat boundaries). A subject is lively; a free part
@@ -692,8 +728,12 @@ function writeParts(ctx: Ctx, sections: Section[], subject: Ev[]): Parts {
     // Transposed, the subject must still sing (no augmented step), and follow from the bar before.
     if (!valid(b, hand, notes, null)) throw new Stuck();
     parts[hand][b] = notes;
+    const rest = (): Ev[] | null => ctx.restBar?.map((ticks) => ({ abs: null, ticks })) ?? null;
     if (p.kind === 'subject') {
-      parts[other][b] = ctx.restOk ? splitTicks(B).map((ticks) => ({ abs: null, ticks })) : must(free(b, other, notes, { prefix: [] }));
+      parts[other][b] = rest() ?? must(free(b, other, notes, { prefix: [] }));
+    } else if (ctx.alone && rest()) {
+      // Grade 1: the other hand rests while this one has the subject.
+      parts[other][b] = rest()!;
     } else {
       // The countersubject returns (transposed, perhaps an octave away) where it still fits the rules.
       let cs: Ev[] | null = null;
@@ -738,28 +778,42 @@ function writeParts(ctx: Ctx, sections: Section[], subject: Ev[]): Parts {
     const headShift = head.length ? fitShift(ctx, head, lead, root, room([lo, hi]), previous) : null;
     let modelLead: Ev[] | null = null;
     let modelOther: Ev[] | null = null;
+    // (Grade 1: the motif alone, the other hand resting.)
+    const resting = ctx.alone && ctx.restBar ? ctx.restBar.map((ticks): Ev => ({ abs: null, ticks })) : null;
     for (let attempt = 0; attempt < 4 && !modelOther; attempt++) {
       const prefix = headShift !== null && attempt < 3 ? shifted(head, headShift) : [];
       modelLead = free(b0, lead, null, { prefix, window: room([lo, hi]), noNext: length > 1 });
       if (!modelLead) continue;
       parts[lead][b0] = modelLead;
-      modelOther = free(b0, other, modelLead, { window: room([olo, ohi]) });
+      modelOther = resting ?? free(b0, other, modelLead, { window: room([olo, ohi]) });
     }
     parts[lead][b0] = must(modelLead);
     parts[other][b0] = must(modelOther);
     for (let k = 1; k < length; k++) {
       const b = b0 + k;
       const l = shifted(modelLead!, -k);
-      const o = shifted(modelOther!, -k);
-      const fits = (notes: Ev[], h: Hand) => notes.every((e) => e.abs! >= ctx.win[h][0] && e.abs! <= ctx.win[h][1]);
+      const o = resting ?? shifted(modelOther!, -k);
+      const fits = (notes: Ev[], h: Hand) => notes.every((e) => e.abs === null || (e.abs >= ctx.win[h][0] && e.abs <= ctx.win[h][1]));
       if (fits(l, lead) && valid(b, lead, l, null)) {
         parts[lead][b] = l;
-        parts[other][b] = fits(o, other) && valid(b, other, o, l) ? o : must(free(b, other, l));
+        parts[other][b] = resting ?? (fits(o, other) && valid(b, other, o, l) ? o : must(free(b, other, l)));
       } else {
         parts[lead][b] = must(free(b, lead, null));
-        parts[other][b] = must(free(b, other, parts[lead][b]));
+        parts[other][b] = resting ?? must(free(b, other, parts[lead][b]));
       }
     }
+  }
+
+  /** A note held for a whole bar: one note where the grade has the value, else the longest it has, then rests (or tied, from Grade 2). */
+  function hold(abs: number): Ev[] {
+    const durations = ctx.cons?.noteTicks ?? ctx.spec.durations;
+    if (durations.includes(B)) return [{ abs, ticks: B }];
+    if (ctx.ties) {
+      const ticks = splitTicks(B);
+      if (ticks.every((t) => durations.includes(t))) return ticks.map((t, i) => ({ abs, ticks: t, tie: i < ticks.length - 1 ? true : undefined }));
+    }
+    const note = [...durations].sort((a, b) => b - a).find((d) => d <= B && restsFor(B - d, ctx.cons?.restTicks ?? ctx.spec.rests)) ?? B;
+    return [{ abs, ticks: note }, ...(restsFor(B - note, ctx.cons?.restTicks ?? ctx.spec.rests) ?? []).map((ticks): Ev => ({ abs: null, ticks }))];
   }
 
   /** IV–V–I: the bass moves by root, the treble to the tonic — through a 4–3 suspension from Grade 3. */
@@ -771,7 +825,23 @@ function writeParts(ctx: Ctx, sections: Section[], subject: Ev[]): Parts {
     const second = split === null ? 0 : B - split;
     const sus = second >= 8 ? 4 : second === 6 ? 4 : 2;
     const useSus =
-      ctx.grade >= 3 && split !== null && durations.includes(sus) && durations.includes(second - sus) && second > sus && (!ctx.cons || ctx.cons.ties);
+      !ctx.alone && ctx.grade >= 3 && split !== null && durations.includes(sus) && durations.includes(second - sus) && second > sus && ctx.ties;
+    if (ctx.alone && ctx.restBar) {
+      // Grade 1: the treble alone makes the cadence (to the leading note or supertonic, then the tonic).
+      const rest = ctx.restBar.map((ticks): Ev => ({ abs: null, ticks }));
+      let line: Ev[] | null = null;
+      for (let attempt = 0; attempt < 12 && !line; attempt++) {
+        const r = attempt < 9 ? rhythm(ctx, 'subject', null, 0, B) : beats(ctx, 0, B);
+        const notes = fill(ctx, { b: P, hand: 'rh', rhythm: r, against: null, prev: prevOf(P, 'rh'), pair: null, relax: attempt < 6 ? 0 : 1 });
+        if (notes && [6, 1].includes(mod(notes[notes.length - 1], 7))) line = notes.map((abs, i) => ({ abs, ticks: r[i] }));
+      }
+      parts.rh[P] = must(line);
+      parts.lh[P] = rest;
+      const last = lastNote(parts.rh[P])!.abs!;
+      parts.rh[C] = hold(last + (mod(last, 7) === 6 ? 1 : -1));
+      parts.lh[C] = rest;
+      return;
+    }
     // The bass: the chords' roots, one note each at Grades 1–2, moving within them later.
     const simple = ctx.grade <= 2 || (useSus && ctx.grade <= 3);
     let lhRhythm: number[];
@@ -849,12 +919,8 @@ function writeParts(ctx: Ctx, sections: Section[], subject: Ev[]): Parts {
       if (lhTonic === null || Math.abs(a - vBass) < Math.abs(lhTonic - vBass)) lhTonic = a;
     }
     if (lhTonic === null) throw new Stuck();
-    const whole = (abs: number): Ev[] => {
-      const ticks = splitTicks(B);
-      return ticks.map((t, i) => ({ abs, ticks: t, tie: i < ticks.length - 1 ? true : undefined }));
-    };
-    parts.rh[C] = whole(rhTonic);
-    parts.lh[C] = whole(lhTonic);
+    parts.rh[C] = hold(rhTonic);
+    parts.lh[C] = hold(lhTonic);
   }
 }
 

@@ -258,7 +258,7 @@ export function planHarmony(ctx: Ctx, form: Form): Segment[][] {
   const mode = ctx.minor ? 'minor' : 'major';
   const choose = (unit: Unit) => {
     const lib = HARMONY_LIBRARY[unit][mode].filter(
-      ([p, g]) => g <= grade && (twoChords || !p.includes(',')) && (ctx.cons?.accidentals !== false || isDiatonic(hkey, p)),
+      ([p, g]) => g <= grade && (twoChords || !p.includes(',')) && (ctx.spec.chromatic || isDiatonic(hkey, p)),
     );
     // Favour the progressions new at this grade, so each grade sounds richer than the last.
     return parseBars(rng.weighted(lib, ([, g]) => (g === grade ? 5 : grade - g === 1 ? 1.3 : 0.6))[0]);
@@ -274,8 +274,15 @@ export function planHarmony(ctx: Ctx, form: Form): Segment[][] {
         return [...a, [...a[0]], ...choose('intensify1'), ...choose('cadence')];
       }
       case 'ternary': {
+        // Phrase by phrase: the opening; a middle section's own progressions; each return of
+        // the opening (as it began, or its first bar leading on to the cadence).
         const a = choose('antecedent');
-        return [...a, ...choose('contrast'), [...a[0]], ...choose('intensify1'), ...choose('cadence')];
+        return form.phrases.flatMap((p, i) => {
+          if (i === 0) return a;
+          if (p.contrast) return choose('contrast');
+          if (p.cadence === 'HC') return a.map((bar) => [...bar]);
+          return [[...a[0]], ...choose('intensify1'), ...choose('cadence')];
+        });
       }
     }
   };
@@ -284,7 +291,8 @@ export function planHarmony(ctx: Ctx, form: Form): Segment[][] {
   // dominant) at least once; and each phrase builds its tension towards the cadence rather
   // than spending it at the start.
   const resolves = (b: string[][]) => progressionOk(hkey, b, halfCloses);
-  const tonicises = (b: string[][]) => grade < 3 || ctx.cons?.accidentals === false || b.flat().some((c) => c.includes('/'));
+  // (Applied chords bring chromatic notes, a Grade 4 element.)
+  const tonicises = (b: string[][]) => !ctx.spec.chromatic || b.flat().some((c) => c.includes('/'));
   const builds = (b: string[][]) => form.phrases.every((p) => tensionBuilds(hkey, b.slice(p.start, p.start + p.roles.length)));
   const fits = [
     (b: string[][]) => resolves(b) && tonicises(b) && builds(b),
@@ -299,7 +307,7 @@ export function planHarmony(ctx: Ctx, form: Form): Segment[][] {
 
   // Now and then a minor-key piece ends in the major (Grade 4+).
   const last = bars.length - 1;
-  if (ctx.minor && grade >= 4 && rng.chance(0.15) && ctx.cons?.accidentals !== false) bars[last] = ['I'];
+  if (ctx.minor && ctx.spec.chromatic && rng.chance(0.15)) bars[last] = ['I'];
 
   return bars.map((bar) =>
     bar.map((raw, k) => ({

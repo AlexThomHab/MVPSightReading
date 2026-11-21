@@ -8,6 +8,7 @@ import { TOP_LINE, anchors, elementAt, inputTargetAt, ledgerLines, snapGrid, tic
  */
 const bar: BarGeometry = {
   bar: 2,
+  lhClef: 'bass',
   left: 300,
   right: 500,
   noteStart: 310,

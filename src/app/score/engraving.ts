@@ -1,12 +1,13 @@
 /**
  * Engraving: lays out a piece as a two-stave piano score (or a four-voice chorale) with
- * VexFlow — systems of four bars, clefs, key and time signatures, beams, ties, ornaments,
- * dynamics, hairpins and slurs — and reports where each bar, stave and note is drawn, for
+ * VexFlow — systems of four bars, clefs (and clef changes), key and time signatures, beams,
+ * triplets, ties, ornaments, spread chords, pauses, dynamics, hairpins, slurs, tempo words,
+ * pedalling, una corda and 8va — and reports where each bar, stave and note is drawn, for
  * highlighting, bar selection and note input. (In Ear Training the caller swaps the bars not
  * yet revealed for the listener's own notes before drawing.)
  */
 import type * as VF from 'vexflow/bravura';
-import { totalTicks, valueOf } from '../music/durations';
+import { onsets, totalTicks, valueOf } from '../music/durations';
 import { Bar, Note, NoteRef, Piece, Staff } from '../music/model';
 import { Key, Pitch, keySignatureAlter } from '../music/theory';
 import { beamGroups } from './beaming';
@@ -69,6 +70,8 @@ export interface BarGeometry {
   /** The y of each stave's top line; lines are STAFF_SPACE apart. */
   rhTop: number;
   lhTop: number;
+  /** The left hand's clef in this bar (treble for a high passage, Grade 6+). */
+  lhClef: 'treble' | 'bass';
   /** The bar's length in ticks. */
   length: number;
   elements: ElementGeometry[];
@@ -112,8 +115,23 @@ interface BuiltBar {
   ties: VF.StaveTie[];
   /** The right hand's (or soprano's) notes, for slurs and hairpins. */
   melody: VF.StaveNote[];
-  /** The left hand's notes (empty for a chorale), for ties over the bar line. */
+  /** The left hand's notes (empty for a chorale), for ties over the bar line and pedal marks. */
   bassNotes: VF.StaveNote[];
+  tuplets: VF.Tuplet[];
+  /** Pedal words (una corda, tre corde) under the left hand's notes, drawn below the pedal marks. */
+  words: { note: VF.StaveNote; text: string }[];
+}
+
+/** What a bar's notes carry besides themselves: words over them, and which sound an octave higher. */
+interface BarMarkings {
+  dynamics?: Map<number, string>;
+  /** Tempo words over right-hand notes (rit., a tempo…). */
+  tempo?: Map<number, string>;
+  /** Words under the left hand at a right-hand note's moment (una corda, tre corde). */
+  pedalWords?: Map<number, string>;
+  /** Right-hand notes under an 8va sign: written an octave lower. */
+  ottava?: Set<number>;
+  marks?: BarMarks;
 }
 
 /** Splits bars into lines of at most BARS_PER_LINE, as evenly as possible (no lonely last bar). */
@@ -133,7 +151,13 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
   const { Renderer, Stave, StaveConnector, Formatter, BarlineType } = vf;
   const layout = lineBreaks(piece.bars.length);
   const lines = layout.length;
-  const height = TOP + lines * SYSTEM_HEIGHT - 40;
+  // Room for what is drawn outside the staves: 8va brackets above, pedal marks and una corda below.
+  const e = piece.expression;
+  const above = e?.ottavas?.length ? 26 : 0;
+  const below = (e?.pedals?.length ? 30 : 0) + (e?.unaCorda?.length ? 22 : 0);
+  const top = TOP + above;
+  const systemHeight = SYSTEM_HEIGHT + above + below;
+  const height = top + lines * systemHeight - 40;
   const renderer = new Renderer(el, Renderer.Backends.SVG);
   renderer.resize(PAGE_WIDTH, height);
   const ctx = renderer.getContext();
@@ -154,23 +178,58 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
   // In Ear Training a tie never joins the listener's notes to the original's.
   const sameSource = (a: number, b: number) => !view.concealed || view.revealed.has(a) === view.revealed.has(b);
   const expression = piece.expression;
-  // Dynamics by bar, then by right-hand note index.
-  const dynamicsByBar = new Map<number, Map<number, string>>();
-  for (const d of expression?.dynamics ?? []) {
-    if (!dynamicsByBar.has(d.at.bar)) dynamicsByBar.set(d.at.bar, new Map());
-    dynamicsByBar.get(d.at.bar)!.set(d.at.index, d.mark);
+  /** A mark by bar, then by right-hand note index. */
+  const byBar = <T>(entries: { at: NoteRef; value: T }[]) => {
+    const map = new Map<number, Map<number, T>>();
+    for (const { at, value } of entries) {
+      if (!map.has(at.bar)) map.set(at.bar, new Map());
+      map.get(at.bar)!.set(at.index, value);
+    }
+    return map;
+  };
+  const dynamicsByBar = byBar((expression?.dynamics ?? []).map((d) => ({ at: d.at, value: d.mark as string })));
+  const tempoByBar = byBar((expression?.tempos ?? []).map((t) => ({ at: t.at, value: t.text })));
+  // Una corda at its first note; tre corde at the note after its last.
+  const after = (r: NoteRef): NoteRef | null => {
+    if (r.index + 1 < piece.bars[r.bar].rh.length) return { bar: r.bar, index: r.index + 1 };
+    return r.bar + 1 < piece.bars.length ? { bar: r.bar + 1, index: 0 } : null;
+  };
+  const pedalWordsByBar = byBar(
+    (expression?.unaCorda ?? []).flatMap((u) => {
+      const end = after(u.to);
+      return [{ at: u.from, value: 'una corda' }, ...(end ? [{ at: end, value: 'tre corde' }] : [])];
+    }),
+  );
+  const ottavaByBar = new Map<number, Set<number>>();
+  for (const o of expression?.ottavas ?? []) {
+    for (let b = o.from.bar; b <= o.to.bar; b++) {
+      piece.bars[b].rh.forEach((_, i) => {
+        if ((b > o.from.bar || i >= o.from.index) && (b < o.to.bar || i <= o.to.index)) {
+          if (!ottavaByBar.has(b)) ottavaByBar.set(b, new Set());
+          ottavaByBar.get(b)!.add(i);
+        }
+      });
+    }
   }
+  const clefOf = (b: number): 'treble' | 'bass' => piece.bars[b]?.lhClef ?? 'bass';
+  const markingsOf = (b: number, dynamics?: Map<number, string>, marks?: BarMarks): BarMarkings => ({
+    dynamics,
+    tempo: tempoByBar.get(b),
+    pedalWords: pedalWordsByBar.get(b),
+    ottava: ottavaByBar.get(b),
+    marks,
+  });
 
   for (let line = 0; line < lines; line++) {
     const bars = layout[line].map((i) => piece.bars[i]);
     /** Formatted right- and left-hand notes of this line's bars. */
     const lineMelody = new Map<number, VF.StaveNote[]>();
     const lineBass = new Map<number, VF.StaveNote[]>();
-    const y = TOP + line * SYSTEM_HEIGHT;
+    const y = top + line * systemHeight;
 
     // Width taken by clef, key and (first line) time signature.
     const probeT = new Stave(LEFT, y, 400).addClef('treble').addKeySignature(keySpec);
-    const probeB = new Stave(LEFT, y + STAVE_GAP, 400).addClef('bass').addKeySignature(keySpec);
+    const probeB = new Stave(LEFT, y + STAVE_GAP, 400).addClef(clefOf(layout[line][0])).addKeySignature(keySpec);
     if (line === 0) {
       probeT.addTimeSignature(timeSpec);
       probeB.addTimeSignature(timeSpec);
@@ -180,8 +239,8 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
 
     const available = PAGE_WIDTH - LEFT - RIGHT - modifierWidth;
     // Give each bar at least the room its notes need, then share out the rest.
-    const minWidths = bars.map((bar) => {
-      const built = buildBar(vf, piece, bar);
+    const minWidths = bars.map((bar, i) => {
+      const built = buildBar(vf, piece, bar, markingsOf(layout[line][i]));
       const formatter = new Formatter().joinVoices(built.treble).joinVoices(built.bass);
       return formatter.preCalculateMinTotalWidth([...built.treble, ...built.bass]) + 36;
     });
@@ -205,7 +264,7 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
       if (view.concealed) treble.setMeasure(barIndex + 1);
       if (first) {
         treble.addClef('treble').addKeySignature(keySpec);
-        bass.addClef('bass').addKeySignature(keySpec);
+        bass.addClef(clefOf(barIndex)).addKeySignature(keySpec);
         if (line === 0) {
           treble.addTimeSignature(timeSpec);
           bass.addTimeSignature(timeSpec);
@@ -224,6 +283,8 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
         }
         Stave.formatBegModifiers([treble, bass]);
       }
+      // A clef change within the line, drawn small at the start of the bar.
+      if (!first && clefOf(barIndex) !== clefOf(barIndex - 1)) bass.addClef(clefOf(barIndex), 'small');
       if (isFinal) {
         treble.setEndBarType(BarlineType.END);
         bass.setEndBarType(BarlineType.END);
@@ -238,7 +299,7 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
       new StaveConnector(treble, bass).setType(isFinal ? 'boldDoubleRight' : 'singleRight').setContext(ctx).draw();
 
       const dynamics = expression ? dynamicsByBar.get(barIndex) : barIndex === 0 && piece.dynamic ? new Map([[0, piece.dynamic]]) : undefined;
-      const built = buildBar(vf, piece, bar, dynamics, view.marks?.get(barIndex));
+      const built = buildBar(vf, piece, bar, markingsOf(barIndex, dynamics, view.marks?.get(barIndex)));
       lineMelody.set(barIndex, built.melody);
       lineBass.set(barIndex, built.bassNotes);
       built.treble.forEach((v) => v.setStave(treble));
@@ -251,7 +312,15 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
       built.treble.forEach((v) => v.draw(ctx, treble));
       built.bass.forEach((v) => v.draw(ctx, bass));
       built.beams.forEach((b) => b.setContext(ctx).draw());
+      built.tuplets.forEach((t) => t.setContext(ctx).draw());
       built.ties.forEach((t) => t.setContext(ctx).draw());
+      // Una corda / tre corde on their own line, below the pedal marks.
+      for (const w of built.words) {
+        ctx.save();
+        ctx.setFont('Academico', 14, 'normal', 'italic');
+        ctx.fillText(w.text, w.note.getAbsoluteX() - 4, bass.getYForBottomText(e?.pedals?.length ? 7 : 3));
+        ctx.restore();
+      }
 
       // Where the notes landed, for selecting them and for note input.
       if (!bar.voices) {
@@ -273,6 +342,7 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
           noteStart: treble.getNoteStartX(),
           rhTop: treble.getYForLine(0),
           lhTop: bass.getYForLine(0),
+          lhClef: clefOf(barIndex),
           length: totalTicks(bar.rh),
           elements,
         });
@@ -290,7 +360,7 @@ export function drawPiece(vf: typeof VF, piece: Piece, view: ScoreView, el: HTML
       x += width;
     });
     drawCrossBarTies(vf, ctx, piece, layout[line], { rh: lineMelody, lh: lineBass }, sameSource);
-    if (expression) drawLineMarks(vf, ctx, expression, layout[line], lineMelody, dynamicsByBar);
+    if (expression) drawLineMarks(vf, ctx, expression, layout[line], lineMelody, lineBass, dynamicsByBar);
   }
   // Hidden hints keep their space (so nothing moves) but are not drawn.
   return { boxes, bars: geometry, width: PAGE_WIDTH, height };
@@ -351,9 +421,10 @@ function drawLineMarks(
   expression: NonNullable<Piece['expression']>,
   barsInLine: number[],
   melody: Map<number, VF.StaveNote[]>,
+  bassNotes: Map<number, VF.StaveNote[]>,
   dynamicsByBar: Map<number, Map<number, string>>,
 ): void {
-  const { StaveHairpin, Modifier, Stem } = vf;
+  const { StaveHairpin, Modifier, Stem, PedalMarking, TextBracket } = vf;
   const first = barsInLine[0];
   const last = barsInLine[barsInLine.length - 1];
   const before = (a: NoteRef, b: NoteRef) => a.bar < b.bar || (a.bar === b.bar && a.index < b.index);
@@ -368,6 +439,20 @@ function drawLineMarks(
     if (!a || !z || !before(start, end)) return null;
     return [a, z, start, end];
   };
+  // The right pedal: Ped. under the left hand's first note, the release mark after its last.
+  for (const p of expression.pedals ?? []) {
+    const a = bassNotes.get(p.from.bar)?.[p.from.index];
+    const z = bassNotes.get(p.to.bar)?.[p.to.index];
+    // (Low enough to clear the bass's ledger-line notes.)
+    if (a && z) PedalMarking.createSustain([a, z]).setLine(2).setContext(ctx).draw();
+  }
+  // 8va: a bracket over the notes written an octave below their sound.
+  for (const o of expression.ottavas ?? []) {
+    const part = clip(o.from, o.to);
+    if (!part) continue;
+    // (Above the slurs and any tempo words over the same notes.)
+    new TextBracket({ start: part[0], stop: part[1], text: '8', superscript: 'va', position: TextBracket.Position.TOP }).setLine(3).setContext(ctx).draw();
+  }
   for (const h of expression.hairpins) {
     const part = clip(h.from, h.to);
     if (!part) continue;
@@ -429,8 +514,10 @@ function drawLineMarks(
   }
 }
 
-function buildBar(vf: typeof VF, piece: Piece, bar: Bar, dynamics?: Map<number, string>, marks?: BarMarks): BuiltBar {
-  const { Voice, Accidental, Beam, Annotation, Articulation, Modifier, StaveTie, Stem, GraceNote, GraceNoteGroup, Ornament } = vf;
+function buildBar(vf: typeof VF, piece: Piece, bar: Bar, markings: BarMarkings = {}): BuiltBar {
+  const { Voice, Accidental, Beam, Annotation, Articulation, Modifier, StaveTie, Stem, GraceNote, GraceNoteGroup, Ornament, Stroke, Tuplet } = vf;
+  const { dynamics, marks } = markings;
+  const tuplets: VF.Tuplet[] = [];
   // Ornament and grace-note accidentals are read against the key signature.
   const key = piece.key;
   const groups = Beam.getDefaultBeamGroups(`${piece.time.num}/${piece.time.den}`);
@@ -439,8 +526,20 @@ function buildBar(vf: typeof VF, piece: Piece, bar: Bar, dynamics?: Map<number, 
   /** Ticks (semiquavers) per beat of the time signature's denominator. */
   const unit = 16 / piece.time.den;
 
-  const toVoice = (notes: Note[], clef: 'treble' | 'bass', stem?: number, fermata?: 'above' | 'below', colours?: BarMarks['rh']) => {
-    const staveNotes = notes.map((n) => makeNote(vf, n, clef, stem));
+  const toVoice = (notes: Note[], clef: 'treble' | 'bass', stem?: number, fermata?: 'above' | 'below', colours?: BarMarks['rh'], ottava?: Set<number>) => {
+    // (Notes under an 8va sign are written an octave below their sound.)
+    const staveNotes = notes.map((n, i) => makeNote(vf, ottava?.has(i) ? { ...n, pitches: n.pitches.map((p) => ({ ...p, octave: p.octave - 1 })) } : n, clef, stem));
+    // Triplets: each three in the time of two, numbered (and beamed where they can be).
+    for (let i = 0; i < notes.length; i++) {
+      if (!notes[i].triplet) continue;
+      const group = staveNotes.slice(i, i + 3);
+      if (group.length === 3 && notes.slice(i, i + 3).every((n) => n.triplet)) tuplets.push(new Tuplet(group, { numNotes: 3, notesOccupied: 2 }));
+      i += 2;
+    }
+    // Spread chords: the wavy arpeggio line before the chord.
+    notes.forEach((n, i) => {
+      if (n.spread && !n.rest && n.pitches.length > 1) staveNotes[i].addModifier(new Stroke(Stroke.Type.ARPEGGIO_DIRECTIONLESS), 0);
+    });
     // Checked answers: a note all one colour (stem and flag too), or each notehead its own.
     colours?.forEach((keys, i) => {
       const sn = staveNotes[i];
@@ -514,10 +613,13 @@ function buildBar(vf: typeof VF, piece: Piece, bar: Bar, dynamics?: Map<number, 
   if (bar.voices) {
     // Chorale: soprano (stems up) and alto (down) share the treble stave; tenor and bass the bass stave.
     treble = [toVoice(bar.voices.s, 'treble', Stem.UP, 'above'), toVoice(bar.voices.a, 'treble', Stem.DOWN)];
-    bass = [toVoice(bar.voices.t, 'bass', Stem.UP), toVoice(bar.voices.b, 'bass', Stem.DOWN, 'below')];
+    // (A three-part chorale has no tenor.)
+    bass = bar.voices.t.length
+      ? [toVoice(bar.voices.t, 'bass', Stem.UP), toVoice(bar.voices.b, 'bass', Stem.DOWN, 'below')]
+      : [toVoice(bar.voices.b, 'bass', undefined, 'below')];
   } else {
-    treble = [toVoice(bar.rh, 'treble', undefined, undefined, marks?.rh)];
-    bass = [toVoice(bar.lh, 'bass', undefined, undefined, marks?.lh)];
+    treble = [toVoice(bar.rh, 'treble', undefined, 'above', marks?.rh, markings.ottava)];
+    bass = [toVoice(bar.lh, bar.lhClef ?? 'bass', undefined, 'below', marks?.lh)];
   }
   Accidental.applyAccidentals(treble.map((v) => v.voice), key.id);
   Accidental.applyAccidentals(bass.map((v) => v.voice), key.id);
@@ -529,11 +631,31 @@ function buildBar(vf: typeof VF, piece: Piece, bar: Bar, dynamics?: Map<number, 
       .setVerticalJustification(Annotation.VerticalJustify.BOTTOM);
     note.addModifier(mark, 0);
   }
+  // Tempo words (rit., a tempo, Più mosso…) over the treble.
+  for (const [index, text] of markings.tempo ?? []) {
+    const note = treble[0].staveNotes[index];
+    if (!note) continue;
+    note.addModifier(new Annotation(text).setFont('Academico', 15, 'normal', 'italic').setVerticalJustification(Annotation.VerticalJustify.TOP), 0);
+  }
+  // Una corda / tre corde under the left hand, at the moment of the right-hand note.
+  const words: BuiltBar['words'] = [];
+  if (!bar.voices) {
+    const rhAt = onsets(bar.rh);
+    const lhAt = onsets(bar.lh);
+    for (const [index, text] of markings.pedalWords ?? []) {
+      const at = rhAt[index] ?? 0;
+      const k = lhAt.findIndex((t, i) => t <= at && at < t + bar.lh[i].ticks);
+      const note = bass[0].staveNotes[k < 0 ? 0 : k];
+      if (note) words.push({ note, text });
+    }
+  }
   return {
     treble: treble.map((v) => v.voice),
     bass: bass.map((v) => v.voice),
     beams,
     ties,
+    tuplets,
+    words,
     melody: treble[0].staveNotes,
     bassNotes: bar.voices ? [] : bass[0].staveNotes,
   };
@@ -541,7 +663,8 @@ function buildBar(vf: typeof VF, piece: Piece, bar: Bar, dynamics?: Map<number, 
 
 function makeNote(vf: typeof VF, n: Note, clef: 'treble' | 'bass', stem?: number): VF.StaveNote {
   const { StaveNote, Dot } = vf;
-  const value = valueOf(n.ticks);
+  // A triplet quaver is written as a quaver (its tuplet makes three of them fill two).
+  const value = valueOf(n.triplet ? n.ticks * 1.5 : n.ticks);
   if (!value) throw new Error(`No notation for a duration of ${n.ticks} semiquavers`);
   const d = { duration: value.vex, dots: value.dotted ? 1 : 0 };
   const note = n.rest

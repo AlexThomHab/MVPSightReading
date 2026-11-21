@@ -32,7 +32,7 @@ export interface Melody {
 type Entry = 'plain' | 'appoggiatura' | 'chromaticAppoggiatura' | 'suspension';
 
 /** How many chromatic melody notes (outside the harmony) each grade may use. */
-const CHROMATIC_QUOTA = [0, 0, 2, 3, 5, 7];
+const CHROMATIC_QUOTA = [0, 0, 0, 0, 3, 5, 6, 7, 8];
 
 /** Appetite for (well-explained) chromatic notes by grade: always below 1 — never colour for its own sake. */
 const CHROMATIC_WEIGHT = [0, 0, 0.6, 0.8, 0.9, 1];
@@ -43,7 +43,8 @@ export function elaborate(ctx: Ctx, form: Form, structure: Structure, frame: Fra
   const n = slots.length;
   const climaxPitch = structure.climaxD !== null ? midi(mains[structure.climaxIndex].pitch) : Infinity;
   // (No chromatic notes at all when the user has switched accidentals off.)
-  let chromaticLeft = ctx.cons?.accidentals === false ? 0 : CHROMATIC_QUOTA[grade];
+  // (Chromatic notes are a Grade 4 element; none at all when the user has switched accidentals off.)
+  let chromaticLeft = ctx.spec.chromatic ? CHROMATIC_QUOTA[grade] : 0;
 
   const ornateBar = (b: number) => form.echoes.get(b)?.ornate ?? false;
   const finalBar = form.barCount - 1;

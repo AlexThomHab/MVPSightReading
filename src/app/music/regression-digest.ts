@@ -5,7 +5,7 @@
  */
 import { generatePiece } from './generator';
 import { GRADES, GRADE_SPECS, Grade } from './grades';
-import { FORM_IDS, timesFor } from './forms';
+import { FORM_IDS, formAvailable, timesFor } from './forms';
 
 /** JSON with object keys sorted, so field order never affects the digest. */
 function canonicalJson(value: unknown): string {
@@ -33,7 +33,7 @@ function fnv1a(text: string): string {
 export function formGradeDigests(seeds = 3): Record<string, string> {
   const out: Record<string, string> = {};
   for (const form of FORM_IDS) {
-    for (const grade of GRADES as readonly Grade[]) {
+    for (const grade of (GRADES as readonly Grade[]).filter((g) => formAvailable(form, g))) {
       const parts: string[] = [];
       for (const timeId of timesFor(grade, form)) {
         for (let s = 0; s < seeds; s++) parts.push(canonicalJson(generatePiece({ seed: `reg-${s}`, grade, form, timeId })));

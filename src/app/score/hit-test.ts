@@ -41,9 +41,12 @@ const HALF = STAFF_SPACE / 2;
 const LEDGER_REACH = 10;
 const EPS = 1e-6;
 
+/** A stave's top line, by its clef: the left hand's stave may be in the treble clef (Grade 6+). */
+export const topLineOf = (staff: Staff, lhClef: 'treble' | 'bass' = 'bass') => (staff === 'rh' || lhClef === 'treble' ? TOP_LINE.rh : TOP_LINE.lh);
+
 /** The y of a line or space on a stave whose top line is at `top`. */
-export function yOf(staff: Staff, top: number, diatonic: number): number {
-  return top + (TOP_LINE[staff] - diatonic) * HALF;
+export function yOf(staff: Staff, top: number, diatonic: number, lhClef?: 'treble' | 'bass'): number {
+  return top + (topLineOf(staff, lhClef) - diatonic) * HALF;
 }
 
 /** The stave a height belongs to: the treble above the gap between the staves, the bass below. */
@@ -127,8 +130,9 @@ export function inputTargetAt(bars: readonly BarGeometry[], x: number, y: number
   if (!g || g.length <= 0) return null;
   const staff = staffAt(g, y);
   const top = staff === 'rh' ? g.rhTop : g.lhTop;
-  const raw = TOP_LINE[staff] - Math.round((y - top) / HALF);
-  const diatonic = Math.max(TOP_LINE[staff] - 8 - LEDGER_REACH, Math.min(TOP_LINE[staff] + LEDGER_REACH, raw));
+  const line = topLineOf(staff, g.lhClef);
+  const raw = line - Math.round((y - top) / HALF);
+  const diatonic = Math.max(line - 8 - LEDGER_REACH, Math.min(line + LEDGER_REACH, raw));
   const grid = snapGrid(ticks, compound);
   const starts: number[] = [];
   for (let t = 0; t < g.length - EPS; t += grid) starts.push(t);
@@ -158,10 +162,10 @@ export function geometryOf(bars: readonly BarGeometry[], bar: number, staff: Sta
 }
 
 /** Ledger lines a pitch needs: the ys of each line, above or below the stave. */
-export function ledgerLines(staff: Staff, top: number, diatonic: number): number[] {
+export function ledgerLines(staff: Staff, top: number, diatonic: number, lhClef?: 'treble' | 'bass'): number[] {
   const out: number[] = [];
-  const topLine = TOP_LINE[staff];
-  for (let d = topLine + 2; d <= diatonic; d += 2) out.push(yOf(staff, top, d));
-  for (let d = topLine - 10; d >= diatonic; d -= 2) out.push(yOf(staff, top, d));
+  const topLine = topLineOf(staff, lhClef);
+  for (let d = topLine + 2; d <= diatonic; d += 2) out.push(yOf(staff, top, d, lhClef));
+  for (let d = topLine - 10; d >= diatonic; d -= 2) out.push(yOf(staff, top, d, lhClef));
   return out;
 }

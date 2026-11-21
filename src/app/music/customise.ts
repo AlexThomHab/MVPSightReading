@@ -40,7 +40,8 @@ const harmonyCuts = (bar: Bar, barTicks: number) => [...bar.harmony.map((h) => h
  * (unless the allowed values cannot fill the harmony's span).
  */
 function refit(notes: readonly Note[], bar: Bar, barTicks: number, noteTicks: readonly number[], restTicks: readonly number[]): Note[] {
-  const ok = (n: Note) => (n.rest ? restTicks : noteTicks).includes(n.ticks);
+  // (A triplet keeps its length: it was written only where the customisation allows triplets.)
+  const ok = (n: Note) => n.triplet === true || (n.rest ? restTicks : noteTicks).includes(n.ticks);
   if (notes.every(ok)) return [...notes];
   const cuts = harmonyCuts(bar, barTicks);
   const spans = cuts.every((end, i) => canFill(end - (i ? cuts[i - 1] : 0), noteTicks)) ? cuts : [barTicks];
@@ -213,7 +214,8 @@ function checkPiece(piece: Piece, c: GenerationConstraints, custom: Customisatio
     for (const { hand, notes } of parts(bar)) {
       if (!chorale && totalTicks(notes) !== barLength(piece, b)) fail(`bar ${b + 1}: ${hand} does not fill the bar`);
       for (const n of notes) {
-        if (n.rest ? !c.restTicks.includes(n.ticks) : !c.noteTicks.includes(n.ticks)) fail(`bar ${b + 1}: a ${n.rest ? 'rest' : 'note'} of ${n.ticks} ticks`);
+        const allowed = n.rest ? c.restTicks.includes(n.ticks) : c.noteTicks.includes(n.ticks) || (n.triplet === true && c.triplets);
+        if (!allowed) fail(`bar ${b + 1}: a ${n.rest ? 'rest' : 'note'} of ${n.ticks} ticks`);
         const sounding = [...n.pitches, ...(n.grace ?? [])];
         for (const p of sounding) {
           if (!inRange(p, hand)) fail(`bar ${b + 1}: ${pitchName(p)} outside the ${hand === 'rh' ? 'melody' : 'left-hand'} range`);
@@ -231,13 +233,15 @@ function checkPiece(piece: Piece, c: GenerationConstraints, custom: Customisatio
   if (!c.dynamics && (piece.dynamic || piece.expression?.dynamics.length || piece.expression?.hairpins.length)) fail('dynamics');
   if (!c.slurs && piece.expression?.slurs.length) fail('slurs');
 
-  // Melodic intervals between successive sounding notes of the melody (ties continue a note).
+  // Melodic intervals between successive sounding notes of the melody — a chord's top note
+  // (ties continue a note).
   const melody = piece.bars.flatMap((bar) => (bar.voices ? bar.voices.s : bar.rh));
+  const top = (n: Note) => n.pitches[n.pitches.length - 1];
   let prev: Note | null = null;
   for (const n of melody) {
     if (n.rest) continue;
-    if (prev && !prev.tie && !melodicIntervalAllowed(c, prev.pitches[0], n.pitches[0])) {
-      fail(`a melodic ${pitchName(prev.pitches[0])}–${pitchName(n.pitches[0])}`);
+    if (prev && !prev.tie && !melodicIntervalAllowed(c, top(prev), top(n))) {
+      fail(`a melodic ${pitchName(top(prev))}–${pitchName(top(n))}`);
     }
     prev = n;
   }

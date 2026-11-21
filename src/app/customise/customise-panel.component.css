@@ -258,3 +258,19 @@
     display: none;
   }
 }
+
+/* Beyond the grade: options from later grades are shown but off until it is switched on. */
+.switch.beyond {
+  margin-top: 8px;
+}
+.switch.disabled {
+  opacity: 0.5;
+}
+.switch small {
+  font-size: 0.8em;
+  opacity: 0.8;
+}
+.tile:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}

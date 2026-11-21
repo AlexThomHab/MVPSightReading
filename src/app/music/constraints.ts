@@ -10,6 +10,11 @@
  *
  * A setting the user has not touched is not overridden: with no customisation at all, every
  * generator behaves exactly as before.
+ *
+ * The grade is a ceiling. A customisation narrows a grade (fewer note values, smaller leaps…);
+ * it goes beyond the grade only with `advanced` switched on, and then the piece is described as
+ * Custom difficulty rather than as the grade (`beyondGrade` says how). Without `advanced`, any
+ * setting beyond the grade is held to the grade (`clampToGrade`) and the panel says so.
  */
 import { fullName, lengthName } from './durations';
 import { GRADE_SPECS, Grade, GradeSpec, TIME_SIGNATURES, TimeSignatureId } from './grades';
@@ -91,6 +96,10 @@ export interface Customisation {
   ornaments?: boolean;
   syncopation?: boolean;
   ties?: boolean;
+  /** Triplet rhythms (Grade 6). */
+  triplets?: boolean;
+  /** Allow settings beyond the grade's parameters: the piece is then Custom difficulty. */
+  advanced?: boolean;
 }
 
 /** True when nothing is customised (an empty or missing customisation). */
@@ -99,7 +108,7 @@ export function isDefault(c: Customisation | undefined): boolean {
 }
 
 const NOTE_VALUE_IDS = new Set<string>(['semibreve', 'dottedMinim', 'minim', 'dottedCrotchet', 'crotchet', 'dottedQuaver', 'quaver', 'semiquaver']);
-const BOOLEAN_FIELDS = ['separateHands', 'accidentals', 'dynamics', 'staccato', 'accents', 'tenuto', 'slurs', 'ornaments', 'syncopation', 'ties'] as const;
+const BOOLEAN_FIELDS = ['separateHands', 'accidentals', 'dynamics', 'staccato', 'accents', 'tenuto', 'slurs', 'ornaments', 'syncopation', 'ties', 'triplets', 'advanced'] as const;
 
 /**
  * A customisation from untrusted data (a shared link): every field type-checked, anything
@@ -198,8 +207,11 @@ export interface GenerationConstraints {
   ornaments: boolean;
   syncopation: boolean;
   ties: boolean;
+  triplets: boolean;
   /** Whether the user chose the note values (then they replace the grade's rhythmic vocabulary). */
   customRhythm: boolean;
+  /** Whether the user chose how the hands relate (at Grade 1, beyond the grade: hands together). */
+  independenceChosen: boolean;
 }
 
 const upTo = (n: number) => new Set(Array.from({ length: n + 1 }, (_, i) => i));
@@ -222,14 +234,89 @@ function rangeOf(setting: PitchRangeSetting | undefined): PitchRange | null {
   return low && high ? { low, high } : null;
 }
 
-/** The grade's defaults, overridden by whatever the user has customised. */
-export function resolveConstraints(grade: Grade, c: Customisation = {}): GenerationConstraints {
+const span = (r: PitchRangeSetting | undefined) => {
+  const low = r && parsePitch(r.low);
+  const high = r && parsePitch(r.high);
+  return low && high ? diatonicIndex(high) - diatonicIndex(low) : 0;
+};
+/** "semiquaver", "dotted crotchet". */
+const valueName = (id: NoteValueId) => fullName(ticksOf(id)).split(' (')[0].toLowerCase();
+
+/**
+ * Each setting that goes beyond the grade's parameters, in words ("semiquavers", "5/8"…).
+ * Empty when the customisation stays within the grade (whether or not `advanced` is on).
+ */
+export function beyondGrade(grade: Grade, c: Customisation | undefined): string[] {
+  if (!c) return [];
   const spec = GRADE_SPECS[grade];
+  const f = spec.features;
+  const out: string[] = [];
+  const values = (c.noteValues ?? []).filter((id) => !spec.durations.includes(ticksOf(id)));
+  if (values.length) out.push(values.map((id) => `${valueName(id)}s`).join(', '));
+  const rests = (c.restValues ?? []).filter((id) => !spec.rests.includes(ticksOf(id)));
+  if (rests.length) out.push(rests.map((id) => `${valueName(id)} rests`).join(', '));
+  const times = (c.timeSignatures ?? []).filter((t) => !spec.times.includes(t));
+  if (times.length) out.push(times.join(', '));
+  const leap = c.leapMode === 'custom' ? Math.max(0, ...(c.ascending ?? []), ...(c.descending ?? [])) : (c.maxLeap ?? 0);
+  if (leap > spec.maxLeap) out.push(`leaps of ${leap === 7 ? 'an' : 'a'} ${INTERVAL_NAMES[leap].toLowerCase()}`);
+  if (c.separateHands && (c.bassMaxLeap ?? 0) > spec.maxBassLeap) out.push(`left-hand leaps of a ${INTERVAL_NAMES[c.bassMaxLeap!].toLowerCase()}`);
+  // (A range is beyond the grade only where the syllabus fixes a five-finger position: Grades 1–2.)
+  if (f.fiveFinger && span(c.melodyRange) > 4) out.push('a right hand beyond a five-finger position');
+  if (f.fiveFinger && c.separateHands && span(c.bassRange) > 4) out.push('a left hand beyond a five-finger position');
+  if (c.independence && !f.handsTogether) out.push('hands together');
+  else if (c.independence === 'full' && spec.complexity.handIndependence < 0.45) out.push('fully independent hands');
+  if (c.syncopation && !f.syncopation) out.push('syncopation');
+  if (c.triplets && !f.triplets) out.push('triplets');
+  if (c.ties && !f.ties) out.push('ties');
+  if (c.ornaments && !f.ornaments) out.push('ornaments');
+  if (c.tenuto && !spec.articulations.includes('tenuto')) out.push('tenuto');
+  return out;
+}
+
+/**
+ * The customisation held to the grade: settings beyond it are dropped (or narrowed), so a
+ * Grade 2 customisation can never produce Grade 7 rhythms by accident. `advanced` lifts this.
+ */
+export function clampToGrade(grade: Grade, c: Customisation): Customisation {
+  if (c.advanced) return c;
+  const spec = GRADE_SPECS[grade];
+  const f = spec.features;
+  const out: Customisation = { ...c };
+  /** The choices within the grade; none of them (but some chosen): the grade's own. An empty choice stays empty (an error to report). */
+  const inGrade = <T>(list: T[] | undefined, ok: (x: T) => boolean) => {
+    if (!list) return undefined;
+    const kept = list.filter(ok);
+    return kept.length || !list.length ? kept : undefined;
+  };
+  out.noteValues = inGrade(c.noteValues, (id) => spec.durations.includes(ticksOf(id)));
+  out.restValues = c.restValues && c.restValues.filter((id) => spec.rests.includes(ticksOf(id)));
+  out.timeSignatures = inGrade(c.timeSignatures, (t) => spec.times.includes(t));
+  if (c.maxLeap !== undefined) out.maxLeap = Math.min(c.maxLeap, spec.maxLeap);
+  if (c.ascending) out.ascending = c.ascending.filter((x) => x <= spec.maxLeap);
+  if (c.descending) out.descending = c.descending.filter((x) => x <= spec.maxLeap);
+  if (c.bassMaxLeap !== undefined) out.bassMaxLeap = Math.min(c.bassMaxLeap, spec.maxBassLeap);
+  if (f.fiveFinger && span(c.melodyRange) > 4) out.melodyRange = undefined;
+  if (f.fiveFinger && span(c.bassRange) > 4) out.bassRange = undefined;
+  if (!f.handsTogether) out.independence = undefined;
+  else if (c.independence === 'full' && spec.complexity.handIndependence < 0.45) out.independence = 'partial';
+  if (!f.syncopation) out.syncopation = undefined;
+  if (!f.triplets) out.triplets = undefined;
+  if (!f.ties) out.ties = undefined;
+  if (!f.ornaments) out.ornaments = undefined;
+  if (!spec.articulations.includes('tenuto')) out.tenuto = undefined;
+  return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined)) as Customisation;
+}
+
+/** The grade's defaults, overridden by whatever the user has customised (held to the grade unless `advanced`). */
+export function resolveConstraints(grade: Grade, raw: Customisation = {}): GenerationConstraints {
+  const spec = GRADE_SPECS[grade];
+  const f = spec.features;
+  const c = clampToGrade(grade, raw);
   const maxLeap = c.maxLeap ?? spec.maxLeap;
   const custom = c.leapMode === 'custom';
   return {
     noteTicks: c.noteValues ? c.noteValues.map(ticksOf) : spec.durations,
-    restTicks: (c.restValues ?? []).map(ticksOf),
+    restTicks: c.restValues ? c.restValues.map(ticksOf) : spec.rests,
     times: c.timeSignatures ?? spec.times,
     melodyRange: rangeOf(c.melodyRange),
     bassRange: c.separateHands ? rangeOf(c.bassRange) : null,
@@ -243,12 +330,14 @@ export function resolveConstraints(grade: Grade, c: Customisation = {}): Generat
     dynamics: c.dynamics ?? true,
     staccato: c.staccato ?? true,
     accents: c.accents ?? true,
-    tenuto: c.tenuto ?? true,
-    slurs: c.slurs ?? true,
-    ornaments: c.ornaments ?? true,
-    syncopation: c.syncopation ?? false,
-    ties: c.ties ?? true,
+    tenuto: c.tenuto ?? spec.articulations.includes('tenuto'),
+    slurs: c.slurs ?? spec.slurs,
+    ornaments: c.ornaments ?? f.ornaments,
+    syncopation: c.syncopation ?? f.syncopation,
+    ties: c.ties ?? f.ties,
+    triplets: c.triplets ?? f.triplets,
     customRhythm: c.noteValues !== undefined,
+    independenceChosen: c.independence !== undefined,
   };
 }
 
@@ -292,6 +381,8 @@ export function effectiveSpec(grade: Grade, c: GenerationConstraints | null): Gr
     maxBassLeap: c.bassMaxLeap,
     keys,
     chromatic: spec.chromatic && c.accidentals,
+    // Hands together where the user asked for it (beyond Grade 1, which plays them separately).
+    features: { ...spec.features, handsTogether: spec.features.handsTogether || c.independenceChosen },
     // V/V raises the 4th and V/ii the tonic: chromatic notes.
     extraChords: c.accidentals ? spec.extraChords : spec.extraChords.filter((x) => x !== 'V/V' && x !== 'V/ii'),
   };
@@ -402,6 +493,11 @@ export function validateSettings(settings: Settings, c: GenerationConstraints): 
   }
   if (!settings.timeId && !form.times.some((t) => c.times.includes(t))) {
     warn('metre', `A ${form.name} is written in ${form.times.join(' or ')}, so it will use ${metres[0]}.`);
+  }
+  // Beyond the grade: held to it, unless the user allows more (then the piece is Custom difficulty).
+  const beyond = beyondGrade(settings.grade, settings.custom);
+  if (beyond.length && !settings.custom?.advanced) {
+    warn('rhythm', `${beyond.join(', ')} ${beyond.length > 1 ? 'are' : 'is'} beyond Grade ${settings.grade}, so left out — switch on Beyond the grade to use ${beyond.length > 1 ? 'them' : 'it'}.`);
   }
   if (c.syncopation && !(c.noteTicks.includes(2) && c.noteTicks.includes(4))) {
     warn('rhythm', 'Syncopation needs quavers and crotchets, so none will be written.');

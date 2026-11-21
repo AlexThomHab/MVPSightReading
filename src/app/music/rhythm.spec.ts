@@ -26,8 +26,8 @@ describe('rhythm cells', () => {
     expect(cellFitsMetre(minim, 1, TIME_SIGNATURES['3/4'])).toBe(true);
   });
 
-  it('use dotted-crotchet units in compound time and 3/8, crotchets otherwise', () => {
-    const units: Record<TimeSignatureId, number> = { '2/4': 4, '3/4': 4, '4/4': 4, '6/8': 6, '9/8': 6, '3/8': 6 };
+  it('use dotted-crotchet units in compound time and 3/8, quavers in 5/8 and 7/8, crotchets otherwise', () => {
+    const units: Record<TimeSignatureId, number> = { '2/4': 4, '3/4': 4, '4/4': 4, '6/8': 6, '9/8': 6, '12/8': 6, '3/8': 6, '5/8': 2, '7/8': 2, '5/4': 4, '7/4': 4 };
     for (const [id, unit] of Object.entries(units)) expect(cellUnit(TIME_SIGNATURES[id as TimeSignatureId])).toBe(unit);
   });
 

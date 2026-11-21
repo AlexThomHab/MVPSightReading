@@ -9,10 +9,11 @@ import { Form } from './form';
 import { Frame } from './frame';
 
 export function ornament(ctx: Ctx, form: Form, melody: Melody, frame: Frame): void {
-  const { grade, rng, ch } = ctx;
+  const { rng, ch } = ctx;
   const { slots } = melody.structure;
   const climaxD = melody.structure.climaxD;
-  const graceQuota = grade >= 5 ? 3 : grade >= 4 ? 2 : 0;
+  // Ornaments (grace notes, turns, trills) are a Grade 8 element.
+  const graceQuota = ctx.spec.features.ornaments ? 3 : 0;
   let graces = 0;
   const flat = melody.notes.flatMap((bar, b) => bar.map((note, i) => ({ note, b, i, m: melody.meta[b][i] })));
   const chordAt = (slot: number) => slots[slot].chord;
@@ -43,7 +44,7 @@ export function ornament(ctx: Ctx, form: Form, melody: Melody, frame: Frame): vo
     graces++;
   }
 
-  if (grade < 5) return;
+  if (!ctx.spec.features.ornaments) return;
   // A turn on a long note that moves on by step (once).
   for (const { note, m, b, i } of flat) {
     if (m.kind !== 'main' || note.ticks < 6 || note.grace || note.tie || b === form.barCount - 1) continue;

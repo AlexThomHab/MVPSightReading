@@ -16,7 +16,7 @@
  * Pure TypeScript and deterministic from the seed, like the piano generator.
  */
 import type { Bar, Cadence, Note, PhraseInfo, Piece, Settings } from './model';
-import { Grade, TIME_SIGNATURES } from './grades';
+import { Grade, TIME_SIGNATURES, lengthsFor } from './grades';
 import { CHORD_SHAPES, ChordQuality, HarmonicFunction, PC, TonalKey, degreeOfLetter, pcAbove, pcName, pcOf, pitchesOf, samePc, scaleDegreePc } from './pitch-class';
 import { GenerationConstraints, PitchRange, constraintsOf, effectiveSpec, melodicIntervalAllowed } from './constraints';
 import { Random } from './random';
@@ -214,8 +214,7 @@ interface PhrasePlan {
   repeats?: number;
 }
 
-function planPhrases(rng: Random, home: TonalKey, grade: Grade, modulate = true): PhrasePlan[] {
-  const count = grade === 1 ? 2 : grade === 5 ? 6 : grade === 4 ? rng.pick([4, 6]) : 4;
+function planPhrases(rng: Random, home: TonalKey, grade: Grade, count: number, modulate = true): PhrasePlan[] {
   const major = home.mode === 'major';
   const rel = (deg: number, mode: Mode): TonalKey => ({ tonic: scaleDegreePc(home, deg), mode });
   const first: PhrasePlan = { key: home, cadence: rng.weighted(['HC', 'IAC'] as Cadence[], (c) => (c === 'HC' ? 3 : 1.5)) };
@@ -250,8 +249,11 @@ function planPhrases(rng: Random, home: TonalKey, grade: Grade, modulate = true)
         ];
   const third = rng.pick(away);
   if (count === 4) return [first, second, third, last];
-  // Bar form: Stollen (phrases 1–2), repeated, then the Abgesang.
-  return [first, second, { ...first, repeats: 0 }, { ...second, repeats: 1 }, third, last];
+  // Bar form: Stollen (phrases 1–2), repeated, then the Abgesang — longer at the higher grades,
+  // touching on each related key in turn before the last phrase.
+  const abgesang = rng.weightedOrder(away, () => 1);
+  const more = Array.from({ length: Math.max(1, count - 5) }, (_, i) => (i === 0 ? third : abgesang[i % abgesang.length]));
+  return [first, second, { ...first, repeats: 0 }, { ...second, repeats: 1 }, ...more, last];
 }
 
 // ---------------------------------------------------------------------------
@@ -918,6 +920,7 @@ export function generateChorale(settings: Settings): Piece {
   const home: TonalKey = { tonic: { l: LETTERS.indexOf(key.tonic), a: key.tonicAlter }, mode: key.mode };
   // (A major tonic chord ending a minor-key chorale needs an accidental.)
   const picardy = key.mode === 'minor' && rng.chance(0.65) && opts.modulate;
+  const phraseCount = Math.max(2, rng.pick(lengthsFor(spec, 2)) / 2);
 
   let best: {
     plans: PhrasePlan[];
@@ -927,7 +930,8 @@ export function generateChorale(settings: Settings): Piece {
     cost: number;
   } | null = null;
   for (let attempt = 0; attempt < 12 && !(best && best.cost < FORBID / 2); attempt++) {
-    const plans = planPhrases(rng, home, grade, opts.modulate);
+    // Two-bar phrases, as many as the grade's length asks for.
+    const plans = planPhrases(rng, home, grade, phraseCount, opts.modulate);
     const tune = composeTune(rng, plans, home, opts);
     if (!tune) continue;
     const beats: BeatInfo[] = tune.map((n, g) => {
@@ -998,6 +1002,9 @@ export function generateChorale(settings: Settings): Piece {
   for (const bar of bars) {
     bar.rh = bar.voices!.s;
     bar.lh = bar.voices!.b;
+    // Before four-part chords (Grade 5) the chorale is in three parts: soprano and alto in the
+    // right hand, the bass alone in the left.
+    if (!spec.features.fourPart) bar.voices!.t = [];
   }
 
   const phrases: PhraseInfo[] = plans.map((p, k) => ({

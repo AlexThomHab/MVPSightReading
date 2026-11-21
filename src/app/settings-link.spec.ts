@@ -14,16 +14,25 @@ describe('settings link', () => {
   });
 
   it('opens links made before eras and forms at the nearest form', () => {
-    expect(settingsFromQuery('?seed=x&grade=2&style=chopin').form).toBe('prelude');
-    expect(settingsFromQuery('?seed=x&grade=2&style=march').form).toBe('gavotte');
-    expect(settingsFromQuery('?seed=x&grade=2&style=chorale&form=fugue').form).toBe('fugue');
+    expect(settingsFromQuery('?seed=x&grade=3&style=chopin').form).toBe('prelude');
+    expect(settingsFromQuery('?seed=x&grade=4&style=march').form).toBe('gavotte');
+    expect(settingsFromQuery('?seed=x&grade=3&style=chorale&form=fugue').form).toBe('fugue');
+  });
+
+  it('opens a link to a form the grade cannot write at one it can, in the same era where possible', () => {
+    expect(settingsFromQuery('?seed=x&grade=2&form=fugue').form).toBe('invention');
+    expect(settingsFromQuery('?seed=x&grade=3&form=gavotte').form).toBe('minuet');
+    expect(settingsFromQuery('?seed=x&grade=1&form=nocturne').form).toBe('minuet');
+    expect(settingsFromQuery('?seed=x&grade=8&form=nocturne').form).toBe('nocturne');
   });
 
   it('offers only major keys without accidentals, and only the form’s own metres', () => {
     expect(keyChoices(3, { accidentals: false }).every((k) => k.mode === 'major')).toBe(true);
     expect(timeChoices(5, 'trio', { timeSignatures: ['2/4', '6/8'] })).toEqual(['2/4']);
     expect(timeChoices(5, 'minuet', undefined)).toEqual(['3/4']);
-    expect(timeChoices(5, 'nocturne', undefined)).toEqual(['4/4', '3/4', '6/8', '9/8']);
+    expect(timeChoices(5, 'nocturne', undefined)).toEqual(['4/4', '3/4', '6/8']);
+    expect(timeChoices(8, 'nocturne', undefined)).toEqual(['4/4', '3/4', '6/8', '9/8', '12/8']);
+    expect(timeChoices(7, 'prelude', undefined)).toEqual(['4/4', '3/4', '2/4', '6/8', '9/8', '5/4', '5/8', '7/8', '7/4']);
     // Below Grade 3 the grade's metres limit the form's.
     expect(timeChoices(2, 'fugue', undefined)).toEqual(['4/4', '2/4', '3/4']);
     // When none of the user's metres suit the form, it keeps its own (and the panel says so).

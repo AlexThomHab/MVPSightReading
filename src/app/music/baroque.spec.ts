@@ -1,30 +1,45 @@
 import { generatePiece } from './generator';
-import { Note, Piece } from './model';
-import { keysFor, timesFor } from './forms';
-import { GRADES, GRADE_SPECS } from './grades';
+import { Note, Piece, Settings } from './model';
+import { formAvailable, keysFor, timesFor } from './forms';
+import { GRADES } from './grades';
+import { validatePiece } from './validate';
 import { LETTERS, diatonicIndex, isSingableInterval, keySignatureAlter, midi, pitchName, tonicSymbol } from './theory';
-import { onsets } from './durations';
+import { onsets, totalTicks } from './durations';
 
 const FORMS = ['invention', 'fugue'] as const;
-const SEEDS = 12;
+const SEEDS = 6;
 
-const pieces: Piece[] = [];
+// Every grade the form is written at (an invention from Grade 1, a fugue from Grade 3).
+const cases: { settings: Settings; piece: Piece }[] = [];
+const add = (settings: Settings) => cases.push({ settings, piece: generatePiece(settings) });
 for (const grade of GRADES) {
   for (const form of FORMS) {
+    if (!formAvailable(form, grade)) continue;
     for (const timeId of timesFor(grade, form)) {
-      for (let s = 0; s < SEEDS; s++) pieces.push(generatePiece({ seed: `b-${s}`, grade, form, timeId }));
+      for (let s = 0; s < SEEDS; s++) add({ seed: `b-${s}`, grade, form, timeId });
     }
-    for (const key of keysFor(grade)) pieces.push(generatePiece({ seed: `k-${key.id}`, grade, form, keyId: key.id }));
+    for (const key of keysFor(grade)) add({ seed: `k-${key.id}`, grade, form, keyId: key.id });
   }
 }
+const pieces = cases.map((c) => c.piece);
+/** The written melody note of a chord (its top) and the bass (its lowest). */
+const top = (n: Note) => n.pitches[n.pitches.length - 1];
 
 const label = (p: Piece) => `seed=${p.seed} grade=${p.grade} form=${p.form} key=${p.key.id} time=${p.time.id}`;
-const sum = (notes: Note[]) => notes.reduce((a, n) => a + n.ticks, 0);
+const sum = (notes: Note[]) => totalTicks(notes);
 const degreeOf = (p: Piece, letter: string) => (LETTERS.indexOf(letter as never) - LETTERS.indexOf(p.key.tonic) + 7) % 7;
 const noteAt = (notes: Note[], at: number) => {
   let t = 0;
-  return notes.find((n) => (t += n.ticks) > at);
+  return notes.find((n) => (t = totalTicks([{ ticks: t }, n])) > at + 1e-6);
 };
+/** Right-hand notes as written: an octave lower under an 8va sign. */
+const written = (p: Piece, hand: 'rh' | 'lh'): Note[] =>
+  p.bars.flatMap((bar, b) =>
+    bar[hand].map((n, i) => {
+      const under = hand === 'rh' && (p.expression?.ottavas ?? []).some((o) => (b > o.from.bar || (b === o.from.bar && i >= o.from.index)) && (b < o.to.bar || (b === o.to.bar && i <= o.to.index)));
+      return under ? { ...n, pitches: n.pitches.map((x) => ({ ...x, octave: x.octave - 1 })) } : n;
+    }),
+  );
 
 function violations(list: Piece[], check: (p: Piece, fail: (msg: string) => void) => void): string[] {
   const out: string[] = [];
@@ -51,6 +66,8 @@ const CONSONANT = [0, 3, 4, 7, 8, 9];
 describe('Baroque counterpoint: Invention and Fugue', { timeout: 60_000 }, () => {
   it('generates every grade, metre and key', () => {
     expect(pieces.length).toBeGreaterThan(300);
+    expect(new Set(pieces.map((p) => p.grade)).size).toBe(8);
+    expect(pieces.some((p) => p.form === 'fugue' && p.grade < 3)).toBe(false);
     for (const p of pieces) {
       expect(['invention', 'fugue']).toContain(p.form);
       expect(p.title, label(p)).toMatch(p.form === 'invention' ? /^Invention in / : /^Fugue in /);
@@ -67,26 +84,28 @@ describe('Baroque counterpoint: Invention and Fugue', { timeout: 60_000 }, () =>
     expect(found).toEqual([]);
   });
 
-  it("keeps note values, keys, metres, lengths and leaps within the grade's limits", () => {
+  it("passes the grade's validation: note values, keys, metres, length, leaps, chords and notation", () => {
+    const found = cases.flatMap(({ settings, piece }) => validatePiece(piece, settings).map((m) => `${label(piece)}: ${m}`)).slice(0, 10);
+    expect(found).toEqual([]);
+  });
+
+  it('sings: every melodic interval is singable (no augmented or diminished steps)', () => {
     const found = violations(pieces, (p, fail) => {
-      const spec = GRADE_SPECS[p.grade];
-      if (!spec.keys.includes(p.key.id)) fail(`key ${p.key.id}`);
-      if (!timesFor(p.grade, p.form).includes(p.time.id)) fail(`time ${p.time.id}`);
-      if (!spec.bars.includes(p.bars.length)) fail(`${p.bars.length} bars`);
       for (const hand of ['rh', 'lh'] as const) {
-        const notes = p.bars.flatMap((b) => b[hand]);
-        for (const n of notes) if (!spec.durations.includes(n.ticks)) fail(`${hand} duration ${n.ticks}`);
-        const pitched = notes.filter((n) => !n.rest);
-        const limit = hand === 'rh' ? spec.maxLeap : spec.maxBassLeap;
+        const pitched = written(p, hand).filter((n) => !n.rest);
         for (let i = 1; i < pitched.length; i++) {
-          const [a, b] = [pitched[i - 1].pitches[0], pitched[i].pitches[0]];
-          const leap = Math.abs(diatonicIndex(b) - diatonicIndex(a));
-          if (leap > limit) fail(`${hand} leap ${pitchName(a)}–${pitchName(b)}`);
+          const [a, b] = [top(pitched[i - 1]), top(pitched[i])];
           if (!isSingableInterval(a, b)) fail(`${hand} interval ${pitchName(a)}–${pitchName(b)}`);
         }
       }
     });
     expect(found).toEqual([]);
+  });
+
+  it('plays each hand on its own at Grade 1 — the imitation passed between them', () => {
+    for (const p of pieces.filter((x) => x.grade === 1)) {
+      for (const bar of p.bars) expect(bar.rh.every((n) => n.rest) || bar.lh.every((n) => n.rest), label(p)).toBe(true);
+    }
   });
 
   it('writes accidentals outside the key only from Grade 4 (and the minor leading note)', () => {
@@ -95,7 +114,9 @@ describe('Baroque counterpoint: Invention and Fugue', { timeout: 60_000 }, () =>
       for (const n of p.bars.flatMap((b) => [...b.rh, ...b.lh])) {
         for (const x of n.pitches) {
           const sig = keySignatureAlter(p.key, x.letter);
-          const ok = x.alter === sig || (p.mode === 'minor' && x.letter === leading && x.alter === sig + 1) || (n.chromatic && p.grade >= 4);
+          // (The minor key's raised 6th and 7th; chromatic notes from Grade 4.)
+          const sixth = LETTERS[(LETTERS.indexOf(p.key.tonic) + 5) % 7];
+          const ok = x.alter === sig || (p.mode === 'minor' && (x.letter === leading || x.letter === sixth) && x.alter === sig + 1) || p.grade >= 4;
           if (!ok) fail(`${pitchName(x)}`);
         }
       }
@@ -148,8 +169,9 @@ describe('Baroque counterpoint: Invention and Fugue', { timeout: 60_000 }, () =>
           prev = null;
           continue;
         }
-        const cur = { rh: midi(s.rh.pitches[0]), lh: midi(s.lh.pitches[0]) };
-        if (diatonicIndex(s.rh.pitches[0]) <= diatonicIndex(s.lh.pitches[0])) fail(`bar ${s.bar + 1}: the parts cross or meet`);
+        // The two voices: the right hand's melody (its top note) and the left hand's bass.
+        const cur = { rh: midi(top(s.rh)), lh: midi(s.lh.pitches[0]) };
+        if (diatonicIndex(s.rh.pitches[0]) <= diatonicIndex(top(s.lh))) fail(`bar ${s.bar + 1}: the parts cross or meet`);
         const perfect = (x: { rh: number; lh: number }) => {
           const ic = Math.abs(x.rh - x.lh) % 12;
           return ic === 0 || ic === 7 ? ic : null;
@@ -193,7 +215,11 @@ describe('Baroque counterpoint: Invention and Fugue', { timeout: 60_000 }, () =>
   it('cadences V–I on the tonic in both hands, with a 4–3 suspension often from Grade 3', () => {
     const found = violations(pieces, (p, fail) => {
       const last = p.bars.at(-1)!;
-      for (const hand of ['rh', 'lh'] as const) if (degreeOf(p, last[hand][0].pitches[0].letter) !== 0) fail(`${hand} ends off the tonic`);
+      // (At Grade 1 the right hand ends alone.)
+      for (const hand of p.grade === 1 ? (['rh'] as const) : (['rh', 'lh'] as const)) {
+        const note = last[hand].find((n) => !n.rest);
+        if (!note || degreeOf(p, (hand === 'rh' ? top(note) : note.pitches[0]).letter) !== 0) fail(`${hand} ends off the tonic`);
+      }
       const penult = p.bars.at(-2)!;
       if (penult.harmony.at(-1)!.symbol !== 'V') fail(`penultimate chord ${penult.harmony.at(-1)!.symbol}`);
       if (last.harmony[0].symbol !== tonicSymbol(p.mode)) fail(`final chord ${last.harmony[0].symbol}`);

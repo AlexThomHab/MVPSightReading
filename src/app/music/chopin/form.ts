@@ -89,20 +89,36 @@ export function planForm(ctx: Ctx, barCount: number): Form {
     };
   }
   // A–B–A′: the motif sequenced, then turned upside down to open the middle section (and
-  // sequenced there), then the return, ornamented.
+  // sequenced there), then the return, ornamented. Longer pieces (Grades 6–8) widen it:
+  //   16 bars  A  B  B′ A′        (the middle section's idea sequenced a phrase higher)
+  //   20 bars  A  A″ B  B′ A′     (the opening answered first)
+  //   24 bars  A  A″ B  B′ A  A′  (and the whole opening period returns)
+  // with one climax, near the start of the final phrase.
+  const contrast: Role[] = ['contrast', 'contrastSeq', 'intensify', 'cadence'];
+  const settled: Role[] = ['return', 'answer', 'precadence', 'cadence'];
+  const count = barCount / 4;
+  const phrases: CPhrase[] = [phrase(0, antecedent, 'HC')];
   echoes.set(2, { source: 0, exact: false, ornate: false });
-  echoes.set(4, { source: 0, exact: false, ornate: false, invert: true });
-  echoes.set(5, { source: 4, exact: false, ornate: false });
-  echoes.set(8, { source: 0, exact: true, ornate: true });
-  return {
-    kind: 'ternary',
-    barCount,
-    climaxBar: 9,
-    echoes,
-    phrases: [
-      phrase(0, antecedent, 'HC'),
-      phrase(4, ['contrast', 'contrastSeq', 'intensify', 'cadence'], 'HC', { contrast: true }),
-      phrase(8, consequent, 'PAC', { returns: true }),
-    ],
-  };
+  if (count >= 5) {
+    phrases.push(phrase(4, settled, 'PAC', { returns: true }));
+    echoes.set(4, { source: 0, exact: true, ornate: ctx.grade >= 2 });
+  }
+  const middles = count === 3 ? 1 : 2;
+  const firstMiddle = phrases.length * 4;
+  for (let m = 0; m < middles; m++) {
+    const start = phrases.length * 4;
+    phrases.push(phrase(start, contrast, 'HC', { contrast: true }));
+    // The middle section's idea grows from the motif, upside down; its second phrase sequences it.
+    echoes.set(start, m === 0 ? { source: 0, exact: false, ornate: false, invert: true } : { source: firstMiddle, exact: false, ornate: false });
+    echoes.set(start + 1, { source: start, exact: false, ornate: false });
+  }
+  if (count === 6) {
+    const start = phrases.length * 4;
+    phrases.push(phrase(start, antecedent, 'HC', { returns: true }));
+    echoes.set(start, { source: 0, exact: true, ornate: false });
+  }
+  const last = phrases.length * 4;
+  phrases.push(phrase(last, consequent, 'PAC', { returns: true }));
+  echoes.set(last, { source: 0, exact: true, ornate: true });
+  return { kind: 'ternary', barCount, climaxBar: last + 1, echoes, phrases };
 }

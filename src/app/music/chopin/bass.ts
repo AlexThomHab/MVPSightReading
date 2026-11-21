@@ -44,9 +44,10 @@ export function planBass(ctx: Ctx, form: Form, segments: Segment[][]): BassLine 
   let best: { cost: number; line: BassLine; relabel: () => void } | null = null;
   // (At Grade 1 the hand stays in its five-finger position.)
   for (const shift of ctx.grade === 1 ? [0] : [0, -1, -2, 1, 2]) {
-    const loD = tonicIndex + lo + shift;
-    const hiD = tonicIndex + hi + shift;
-    if (loD < lowest || hiD > highest) continue;
+    // (A wide range at the higher grades is held to the left hand's compass, C2–E4.)
+    const loD = Math.max(lowest, tonicIndex + lo + shift);
+    const hiD = Math.min(highest, tonicIndex + hi + shift);
+    if (hiD - loD < 4 || (shift !== 0 && (tonicIndex + lo + shift < lowest || tonicIndex + hi + shift > highest) && hi - lo < 12)) continue;
     const solved = solveBass(ctx, form, segments, loD, hiD);
     const cost = solved.cost + Math.abs(shift) * 0.5;
     if (!best || cost < best.cost) best = { ...solved, cost };

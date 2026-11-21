@@ -10,6 +10,7 @@ import {
   NoteValueId,
   PitchRangeSetting,
   RhythmicDifficulty,
+  beyondGrade,
   defaultRange,
   isDefault,
   resolveConstraints,
@@ -23,7 +24,7 @@ import { DOT, NOTE, REST, timeDigits } from '../score/glyphs';
 import { PitchRangeComponent } from './pitch-range.component';
 
 type Area = ConstraintIssue['area'];
-type Toggle = 'accidentals' | 'dynamics' | 'staccato' | 'accents' | 'tenuto' | 'slurs' | 'ornaments' | 'syncopation' | 'ties';
+type Toggle = 'accidentals' | 'dynamics' | 'staccato' | 'accents' | 'tenuto' | 'slurs' | 'ornaments' | 'syncopation' | 'ties' | 'triplets';
 
 interface Tile {
   id: NoteValueId;
@@ -42,7 +43,7 @@ function tilesFor(glyphs: Readonly<Record<number, string>>): Tile[] {
 
 /** Which Customisation fields each section of the panel sets (for its "Custom" badge). */
 const SECTION_FIELDS: Record<Area, (keyof Customisation)[]> = {
-  rhythm: ['noteValues', 'restValues', 'rhythmicDifficulty', 'syncopation', 'ties'],
+  rhythm: ['noteValues', 'restValues', 'rhythmicDifficulty', 'syncopation', 'ties', 'triplets'],
   metre: ['timeSignatures'],
   range: ['melodyRange', 'separateHands', 'bassRange', 'bassMaxLeap'],
   leaps: ['leapMode', 'maxLeap', 'ascending', 'descending'],
@@ -99,12 +100,18 @@ export class CustomisePanelComponent {
     { id: 'medium', label: 'Medium' },
     { id: 'difficult', label: 'Difficult' },
   ];
-  protected readonly articulationToggles: { id: Toggle; label: string }[] = [
-    { id: 'staccato', label: 'Staccato' },
-    { id: 'accents', label: 'Accents' },
-    { id: 'tenuto', label: 'Tenuto' },
-    { id: 'slurs', label: 'Slurs' },
-    { id: 'ornaments', label: 'Ornaments' },
+  /** Each switch, with the grade that introduces it (the syllabus's). */
+  protected readonly articulationToggles: { id: Toggle; label: string; from: Grade }[] = [
+    { id: 'staccato', label: 'Staccato', from: 1 },
+    { id: 'accents', label: 'Accents', from: 1 },
+    { id: 'tenuto', label: 'Tenuto', from: 4 },
+    { id: 'slurs', label: 'Slurs', from: 1 },
+    { id: 'ornaments', label: 'Ornaments', from: 8 },
+  ];
+  protected readonly rhythmToggles: { id: Toggle; label: string; from: Grade }[] = [
+    { id: 'ties', label: 'Ties', from: 2 },
+    { id: 'syncopation', label: 'Syncopation', from: 5 },
+    { id: 'triplets', label: 'Triplets', from: 6 },
   ];
 
   /** The draft resolved against the grade: what each control currently shows. */
@@ -122,6 +129,34 @@ export class CustomisePanelComponent {
   protected readonly bassRange = computed(() => this.value().bassRange ?? defaultRange(this.grade(), 'bass'));
   protected readonly leapMode = computed(() => this.value().leapMode ?? 'max');
   protected readonly gradeTimes = computed(() => GRADE_SPECS[this.grade()].times);
+  /** Settings beyond the grade are allowed (the piece is then Custom difficulty). */
+  protected readonly advanced = computed(() => !!this.value().advanced);
+  /** What the draft asks for beyond the grade, in words. */
+  protected readonly beyond = computed(() => beyondGrade(this.grade(), this.value()));
+
+  protected setAdvanced(on: boolean): void {
+    const next = { ...this.value() };
+    if (on) next.advanced = true;
+    else delete next.advanced;
+    this.valueChange.emit(next);
+  }
+
+  protected noteBeyond(t: Tile): boolean {
+    return !GRADE_SPECS[this.grade()].durations.includes(t.ticks);
+  }
+
+  protected restBeyond(t: Tile): boolean {
+    return !GRADE_SPECS[this.grade()].rests.includes(t.ticks);
+  }
+
+  protected timeBeyond(id: TimeSignatureId): boolean {
+    return !GRADE_SPECS[this.grade()].times.includes(id);
+  }
+
+  protected toggleBeyond(id: Toggle): boolean {
+    const t = [...this.rhythmToggles, ...this.articulationToggles].find((x) => x.id === id);
+    return !!t && this.grade() < t.from;
+  }
 
   constructor() {
     // The tiles are drawn in Bravura, which arrives with VexFlow (normally already loaded by the score).
