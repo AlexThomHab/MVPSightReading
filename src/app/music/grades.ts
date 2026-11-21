@@ -80,7 +80,7 @@ const G4_KEYS = [...G3_KEYS, 'A', 'Eb', 'F#m', 'Cm'];
 const G5_KEYS = [...G4_KEYS, 'E', 'Ab', 'C#m', 'Fm'];
 
 const G3_CHORDS: readonly ExtraChord[] = ['ii', 'iii', 'vi', 'v', 'III', 'VI'];
-const G4_CHORDS: readonly ExtraChord[] = [...G3_CHORDS, 'vii°', 'VII', 'ii°', 'V/V'];
+const G4_CHORDS: readonly ExtraChord[] = [...G3_CHORDS, 'vii°', 'VII', 'ii°', 'V/V', 'V/ii'];
 
 const G1_DURATIONS = [TICKS.semibreve, TICKS.dottedMinim, TICKS.minim, TICKS.crotchet];
 

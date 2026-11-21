@@ -1,6 +1,10 @@
 /**
- * The piano styles' generator (Classical, Waltz, Minuet, March, Folk): harmony → rhythm →
- * melody → left hand → Piece.
+ * The Classical / Galant era's generator (Minuet, Trio, Waltz, Polonaise, Gavotte): schemata →
+ * harmony → rhythm → melody → left hand → Piece.
+ *
+ * Each phrase is a chain of galant schemata (see below), which fix both the bass line (as
+ * chords) and the melody's notes over them; the melody search fills in everything between.
+ * The form brings its own rhythm, accompaniment, articulation and (the Gavotte) an upbeat.
  *
  * Pure TypeScript with no Angular dependencies. Fully deterministic: the same settings
  * (including the seed) always produce the same piece.
@@ -12,12 +16,12 @@ import {
   TimeSignature,
   TimeSignatureId,
 } from './grades';
-import type { Cadence, Note, Piece, SequenceName, Settings, Tempo } from './model';
+import type { Bar, Cadence, Harmony, Note, Piece, SequenceName, Settings, Tempo } from './model';
 import { Random } from './random';
 import { GenerationConstraints, constraintsOf, effectiveSpec, melodicIntervalAllowed, pitchWindow } from './constraints';
-import { PIANO_STYLES, PianoStyleSpec, isPianoStyle } from './piano-styles';
+import { GALANT_FORMS, GalantFormSpec, isGalantForm } from './galant-forms';
 import { cellUnit, fillWithCells, harmonySplit, rhythmPreferences } from './rhythm';
-import { STYLES, StyleId } from './styles';
+import { formTimes } from './forms';
 import {
   Chord,
   KEYS,
@@ -33,25 +37,22 @@ import {
   diatonicIndex,
   isChordTone,
   isSingableInterval,
-  keyById,
   keyName,
   mod,
   tonicSymbol,
 } from './theory';
-import { starts } from './durations';
+import { splitTicks, starts } from './durations';
 
-export function generatePianoPiece(settings: Settings): Piece {
-  const { seed, grade, style: styleId } = settings;
-  if (!isPianoStyle(styleId)) throw new Error(`${styleId} is not a piano style`);
+export function generateGalant(settings: Settings): Piece {
+  const { seed, grade, form: formId } = settings;
+  if (!isGalantForm(formId)) throw new Error(`${formId} is not a galant form`);
   const cons = constraintsOf(settings);
   const spec = effectiveSpec(grade, cons);
-  const style = PIANO_STYLES[styleId];
-  const rng = new Random(
-    `${seed}|g${grade}|${styleId}|${settings.keyId ?? ''}|${settings.timeId ?? ''}`,
-  );
+  const style = GALANT_FORMS[formId];
+  const rng = new Random(`${seed}|g${grade}|${formId}|${settings.keyId ?? ''}|${settings.timeId ?? ''}`);
 
-  const key = chooseKey(rng, spec, styleId, settings.keyId);
-  const time = TIME_SIGNATURES[chooseTime(rng, spec, style, settings.timeId)];
+  const key = chooseKey(rng, spec, settings.keyId);
+  const time = TIME_SIGNATURES[settings.timeId ?? chooseTime(rng, formTimes(formId, spec.times))];
   const barCount = rng.pick(spec.bars);
 
   const ctx: Ctx = { rng, spec, style, key, time, grade, cons };
@@ -60,28 +61,34 @@ export function generatePianoPiece(settings: Settings): Piece {
   const rhythms = planRhythms(ctx, phrases, segments);
   const rh = buildMelody(ctx, phrases, segments, rhythms);
   const lh = buildLeftHand(ctx, segments);
+  articulate(ctx, rh);
+
+  const bars: Bar[] = segments.map((segs, i) => ({
+    harmony: segs.map((s): Harmony => ({ symbol: s.pedal ? `${s.chord.symbol} (pedal)` : s.chord.symbol, at: s.at, melody: s.goal === undefined ? undefined : s.goal + 1 })),
+    rh: rh[i],
+    lh: lh[i],
+  }));
+  const upbeat = style.upbeat ? time.barTicks / 2 : undefined;
 
   return {
     title: `${style.titleWord} in ${keyName(key)}`,
     seed,
     grade,
-    style: styleId,
+    form: formId,
     key,
     mode: key.mode,
     time,
     tempo: chooseTempo(rng, grade, style, time),
     dynamic: style.dynamic,
-    bars: segments.map((segs, i) => ({
-      harmony: segs.map((s) => ({ symbol: s.chord.symbol, at: s.at })),
-      rh: rh[i],
-      lh: lh[i],
-    })),
-    phrases: phrases.map(({ startBar, cadence, sequence, repeatsOpening }) => ({
+    bars: upbeat ? withUpbeat(bars, time, upbeat) : bars,
+    ...(upbeat ? { upbeat } : {}),
+    phrases: phrases.map(({ startBar, cadence, sequence, repeatsOpening, schemas }) => ({
       startBar,
       bars: 4,
       cadence,
       sequence: sequence?.name,
       repeatsOpening,
+      schemas,
     })),
   };
 }
@@ -89,7 +96,7 @@ export function generatePianoPiece(settings: Settings): Piece {
 interface Ctx {
   rng: Random;
   spec: GradeSpec;
-  style: PianoStyleSpec;
+  style: GalantFormSpec;
   key: Key;
   time: TimeSignature;
   grade: Grade;
@@ -103,52 +110,133 @@ interface Segment {
   /** Ticks from the start of the bar. */
   at: number;
   ticks: number;
+  /** The melody's schema note (0-based scale degree) where this chord begins. */
+  goal?: number;
+  /** Over a tonic pedal. */
+  pedal?: boolean;
 }
 
-function toSegments(bar: string[], time: TimeSignature, mode: Mode): Segment[] {
-  if (bar.length === 1) return [{ chord: chordFor(bar[0], mode), at: 0, ticks: time.barTicks }];
+function toSegments(bar: PlannedChord[], time: TimeSignature, mode: Mode): Segment[] {
+  const seg = (c: PlannedChord, at: number, ticks: number): Segment => ({ chord: chordFor(c.symbol, mode), at, ticks, goal: c.goal, pedal: c.pedal });
+  if (bar.length === 1) return [seg(bar[0], 0, time.barTicks)];
   const split = harmonySplit(time)!;
-  return [
-    { chord: chordFor(bar[0], mode), at: 0, ticks: split },
-    { chord: chordFor(bar[1], mode), at: split, ticks: time.barTicks - split },
-  ];
+  return [seg(bar[0], 0, split), seg(bar[1], split, time.barTicks - split)];
 }
 
 // ---------------------------------------------------------------------------
 // Key, time, tempo
 // ---------------------------------------------------------------------------
 
-function chooseKey(rng: Random, spec: GradeSpec, style: StyleId, keyId?: string): Key {
-  const override = keyId ? keyById(keyId) : undefined;
-  if (override) return override;
-  const keys = KEYS.filter((k) => spec.keys.includes(k.id) && !(STYLES[style].majorOnly && k.mode === 'minor'));
-  // Major keys are more common in early-grade sight-reading.
-  return rng.weighted(keys, (k) => (k.mode === 'major' ? 2 : 1));
+function chooseKey(rng: Random, spec: GradeSpec, keyId?: string): Key {
+  const chosen = keyId ? KEYS.find((k) => k.id === keyId) : undefined;
+  return chosen ?? rng.pick(KEYS.filter((k) => spec.keys.includes(k.id)));
 }
 
-function chooseTime(rng: Random, spec: GradeSpec, style: PianoStyleSpec, timeId?: TimeSignatureId): TimeSignatureId {
-  if (timeId && TIME_SIGNATURES[timeId]) return timeId;
-  const preferred = style.times.filter((t) => spec.times.includes(t));
-  const simple = spec.times.filter((t) => !TIME_SIGNATURES[t].compound);
-  // (A customised set of metres may hold none the style prefers, or only compound ones.)
-  const pool = preferred.length ? preferred : simple.length ? simple : [...spec.times];
-  // The style's first-listed metre is its most typical (e.g. 6/8 for Folk once Grade 3 allows it).
-  return rng.weighted(pool, (t) => (t === style.times[0] ? 2 : 1));
+/** The form's most typical metre is the likeliest. */
+function chooseTime(rng: Random, metres: readonly TimeSignatureId[]): TimeSignatureId {
+  return rng.weighted(metres, (t) => (t === metres[0] ? 2 : 1));
 }
 
-function chooseTempo(rng: Random, grade: Grade, style: PianoStyleSpec, time: TimeSignature): Tempo {
+function chooseTempo(rng: Random, grade: Grade, style: GalantFormSpec, time: TimeSignature): Tempo {
   const [slow, fast] = style.crotchetBpm;
   const crotchet = slow + ((fast - slow) * (grade - 1)) / 4 + rng.int(-4, 4);
   const even = (n: number) => Math.round(n / 2) * 2;
-  const marking = style.id === 'classical' && grade >= 4 ? 'Allegretto' : style.tempoMarking;
+  const marking = style.tempoMarking;
   if (time.compound) return { bpm: even(crotchet * 0.58), beatUnit: 'qd', marking };
   if (time.id === '3/8') return { bpm: even(crotchet * 1.5), beatUnit: '8', marking };
   return { bpm: even(crotchet), beatUnit: 'q', marking };
 }
 
 // ---------------------------------------------------------------------------
-// Harmony: 4-bar phrases, each ending in a cadence, some opening with a sequence
+// The form's character: articulation, and the Gavotte's upbeat
 // ---------------------------------------------------------------------------
+
+/**
+ * A Gavotte's crotchets are detached (staccato on the weak beats, Grade 2+); a Polonaise
+ * accents its first beat (Grade 3+). Cadence bars and the final bar are left plain.
+ */
+function articulate(ctx: Ctx, rh: Note[][]): void {
+  const { style, grade, time } = ctx;
+  rh.forEach((bar, b) => {
+    if (b === rh.length - 1) return;
+    starts(bar.map((n) => n.ticks)).forEach((at, i) => {
+      const n = bar[i];
+      if (n.rest || n.articulation) return;
+      // (Not in a phrase's cadence bar, nor on a note tied over.)
+      if (style.articulation === 'detached' && grade >= 2 && n.ticks === 4 && !time.strongTicks.includes(at) && b % 4 !== 3 && !n.tie) n.articulation = 'staccato';
+      if (style.articulation === 'accented' && grade >= 3 && at === 0 && b % 2 === 0) n.articulation = 'accent';
+    });
+  });
+}
+
+/**
+ * Re-bars the piece to begin with an upbeat of `upbeat` ticks: every bar line moves that much
+ * later, so the first bar holds the upbeat, each phrase (and each cadence) falls in the middle
+ * of a bar, and the last bar holds the rest. Notes across a moved bar line are split and tied.
+ */
+function withUpbeat(bars: Bar[], time: TimeSignature, upbeat: number): Bar[] {
+  const B = time.barTicks;
+  const total = bars.length * B;
+  /** New bar of an absolute tick, and the tick within it. */
+  const place = (t: number): [number, number] => (t < upbeat ? [0, t] : [Math.floor((t - upbeat) / B) + 1, (t - upbeat) % B]);
+  const bounds = (k: number): [number, number] => (k === 0 ? [0, upbeat] : [upbeat + (k - 1) * B, Math.min(total, upbeat + k * B)]);
+  const count = place(total - 1)[0] + 1;
+  const out: Bar[] = Array.from({ length: count }, () => ({ harmony: [], rh: [], lh: [] }));
+  for (const hand of ['rh', 'lh'] as const) {
+    let t = 0;
+    bars.forEach((bar) =>
+      bar[hand].forEach((n) => {
+        let at = t;
+        const end = t + n.ticks;
+        while (at < end) {
+          const [k] = place(at);
+          const piece = Math.min(end, bounds(k)[1]) - at;
+          if (piece <= 0) throw new Error('A bar is longer than its time signature');
+          const parts = splitTicks(piece);
+          parts.forEach((ticks, j) => {
+            const last = at + piece >= end && j === parts.length - 1;
+            out[k][hand].push(n.rest ? { pitches: [], ticks, rest: true } : { ...n, pitches: n.pitches.map((p) => ({ ...p })), ticks, tie: last ? n.tie : true });
+          });
+          at += piece;
+        }
+        t = end;
+      }),
+    );
+  }
+  bars.forEach((bar, i) =>
+    bar.harmony.forEach((h) => {
+      const [k, at] = place(i * B + h.at);
+      out[k].harmony.push({ ...h, at });
+    }),
+  );
+  // Each new bar sounds the harmony carried over from the one before, if none starts on its first beat.
+  out.forEach((bar, k) => {
+    if (k > 0 && !bar.harmony.some((h) => h.at === 0)) {
+      const carried = out[k - 1].harmony[out[k - 1].harmony.length - 1];
+      if (carried) bar.harmony.unshift({ ...carried, at: 0, melody: undefined });
+    }
+  });
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Harmony: phrases built from galant schemata
+// ---------------------------------------------------------------------------
+//
+// Galant composers built phrases from stock patterns — schemata — each a bass line with a
+// melody line above it (Gjerdingen, Music in the Galant Style). Here every phrase is a chain
+// of schemata, written as chords with the melody's scale degree over each (`IV:6` is IV with
+// la on top), and the melody search below must put exactly those notes there. The schemata:
+//   Do–Re–Mi     melody 1–2–3 over bass 1–7–1 (I, V6, I): an opening gambit.
+//   Meyer        melody 1–7 … 4–3 over bass 1–2 … 7–1: an opening of two matched halves.
+//   Romanesca    melody falling by step in tenths over a bass falling 1–7–6–5 (a sequence).
+//   Prinner      melody 6–5–4–3 over bass 4–3–2–1: the riposte that answers an opening.
+//   Fonte        a step down: ♯1–2 over V/ii–ii, then 7–1 over V–I (a sequence).
+//   Monte        a step up: 3–4 over I–IV, then ♯4–5 over V/V–V (a sequence).
+//   Quiescenza   1–6–7–1 over a held tonic in the bass: a close after the final cadence.
+//   Ponte        the melody climbing over the dominant, held: a bridge back to the opening.
+// with the cadences that end phrases: a complete cadence (…–2–1 over V–I), a half cadence
+// (on V), a converging half cadence (ii6–V) and a Phrygian half cadence (iv6–V, minor).
 
 type PhraseKind = 'single' | 'antecedent' | 'contrast' | 'consequent' | 'continuation';
 
@@ -159,120 +247,138 @@ interface SequenceSpec {
   step: number;
 }
 
+/** A chord in a phrase plan, with the melody's schema note over it and whether the bass holds the tonic. */
+interface PlannedChord {
+  symbol: string;
+  /** Scale degree, 0-based (do = 0), that the melody must sound when this chord begins. */
+  goal?: number;
+  /** Over a tonic pedal (the Quiescenza). */
+  pedal?: boolean;
+}
+
 interface Phrase {
   kind: PhraseKind;
   startBar: number;
-  /** Four bars of one or two chord symbols each. */
-  harmony: string[][];
+  /** Four bars of one or two chords each. */
+  harmony: PlannedChord[][];
   cadence: Cadence;
   sequence?: SequenceSpec;
   repeatsOpening: boolean;
+  /** The schemata the phrase is built from, in order. */
+  schemas: string[];
 }
 
 interface Template {
-  harmony: string[][];
+  harmony: PlannedChord[][];
   cadence: Cadence;
   weight: number;
+  schemas: string[];
   sequence?: SequenceSpec;
   minGrade?: Grade;
+  /** May keep two chords in a bar in any metre (not only duple), as a cadence's ii6–V does. */
+  paired?: boolean;
 }
 
-/** Builds a template from "I,V6 | vi,iii6 | IV | V" notation. */
-function tpl(bars: string, cadence: Cadence, weight: number, extra: Partial<Template> = {}): Template {
-  return { harmony: bars.split('|').map((b) => b.trim().split(',').map((c) => c.trim())), cadence, weight, ...extra };
+/**
+ * Builds a template from "I:1,V6:2 | I:3 | V:2" notation: bars split by "|", chords by ",";
+ * after a chord, ":n" is the melody's scale degree (1–7) and "^" a tonic pedal under it.
+ */
+function tpl(schemas: string[], bars: string, cadence: Cadence, weight: number, extra: Partial<Template> = {}): Template {
+  const chord = (token: string): PlannedChord => {
+    const m = /^([^:^]+)(?::(\d))?(\^)?$/.exec(token.trim());
+    if (!m) throw new Error(`Bad chord ${token}`);
+    return { symbol: m[1], goal: m[2] ? Number(m[2]) - 1 : undefined, pedal: m[3] ? true : undefined };
+  };
+  return { schemas, harmony: bars.split('|').map((b) => b.split(',').map(chord)), cadence, weight, ...extra };
 }
 
 const ROMANESCA: SequenceSpec = { name: 'romanesca', units: 3, step: -2 };
-const FIFTHS: SequenceSpec = { name: 'descending-fifths', units: 3, step: -1 };
-const FIFTHS_SHORT: SequenceSpec = { name: 'descending-fifths', units: 2, step: -1 };
-const FIVE_SIX: SequenceSpec = { name: 'ascending-5-6', units: 3, step: 1 };
+const FIFTHS: SequenceSpec = { name: 'descending-fifths', units: 2, step: -1 };
+const FONTE: SequenceSpec = { name: 'fonte', units: 2, step: -1 };
+const MONTE: SequenceSpec = { name: 'monte', units: 2, step: 1 };
 
-/** Sequences that end on a half cadence, usable to open a piece or as a middle phrase. */
-const SEQUENCES_HC: Record<Mode, Template[]> = {
+/** A whole piece of four bars (Grade 1): an opening gesture closed by a complete cadence. */
+const SINGLE: Record<Mode, Template[]> = {
   major: [
-    // Romanesca: a bass falling by step under alternating root-position and 6 chords.
-    tpl('I,V6 | vi,iii6 | IV,I6 | ii6,V', 'HC', 3, { sequence: ROMANESCA, minGrade: 3 }),
-    // Circle of fifths: roots fall a 5th within each bar; each bar falls a step.
-    tpl('I,IV | vii°,iii | vi,ii | V', 'HC', 2.5, { sequence: FIFTHS, minGrade: 4 }),
-    // Ascending 5–6: the 5th above each bass moves to a 6th, and the pattern climbs by step.
-    tpl('I,vi6 | ii,vii°6 | iii,I6 | IV,V', 'HC', 2.5, { sequence: FIVE_SIX, minGrade: 4 }),
+    tpl(['Complete cadence'], 'I:3 | IV:4 | V:2 | I:1', 'PAC', 3),
+    tpl(['Do–Re–Mi', 'Complete cadence'], 'I:1 | V:2 | I:3,V:2 | I:1', 'PAC', 2, { paired: true }),
+    tpl(['Quiescenza line', 'Complete cadence'], 'I:1 | IV:6 | V:7 | I:1', 'PAC', 2),
   ],
   minor: [
-    tpl('i,v6 | VI,III6 | iv,i6 | iv6,V', 'HC', 3, { sequence: ROMANESCA, minGrade: 3 }),
-    tpl('i,iv | VII,III | VI,ii°6 | V', 'HC', 2.5, { sequence: FIFTHS, minGrade: 4 }),
+    tpl(['Complete cadence'], 'i:3 | iv:4 | V:2 | i:1', 'PAC', 3),
+    tpl(['Do–Re–Mi', 'Complete cadence'], 'i:1 | V:2 | i:3,V:2 | i:1', 'PAC', 2, { paired: true }),
+    tpl(['Quiescenza line', 'Complete cadence'], 'i:1 | iv:6 | V:7 | i:1', 'PAC', 2),
   ],
 };
 
-const SINGLE: Record<Mode, Template[]> = {
-  major: [tpl('I | IV | V | I', 'PAC', 3), tpl('I | V | V | I', 'PAC', 1), tpl('I | I | V | I', 'PAC', 1)],
-  minor: [tpl('i | iv | V | i', 'PAC', 3), tpl('i | V | V | i', 'PAC', 1), tpl('i | i | V | i', 'PAC', 1)],
-};
-
-/** First phrase: starts on the tonic and ends with a weaker cadence (HC, IAC or PC). */
+/** The first phrase: an opening schema, ending with a weaker cadence (HC or IAC). */
 const OPENING: Record<Mode, Template[]> = {
   major: [
-    tpl('I | IV | V | V', 'HC', 3),
-    tpl('I | IV | I | V', 'HC', 2.5),
-    tpl('I | V | I | V', 'HC', 1.5),
-    tpl('I | vi | IV | V', 'HC', 2),
-    tpl('I | IV | V/V | V', 'HC', 1.5),
-    tpl('I | IV | V | I', 'IAC', 2),
-    tpl('I | V | V | I', 'IAC', 1),
-    tpl('I | V | IV | I', 'PC', 1.5),
-    tpl('I | vi | IV | I', 'PC', 1),
-    ...SEQUENCES_HC.major,
+    tpl(['Do–Re–Mi', 'Half cadence'], 'I:1 | V:2 | I:3 | V:2', 'HC', 2),
+    tpl(['Do–Re–Mi', 'Half cadence'], 'I:1 | V6:2 | I:3 | V:2', 'HC', 3, { minGrade: 3 }),
+    tpl(['Do–Re–Mi', 'Converging half cadence'], 'I:1 | V6:2 | I:3 | ii6:4,V:2', 'HC', 2.5, { minGrade: 3, paired: true }),
+    tpl(['Do–Re–Mi', 'Half cadence'], 'I:1 | V:2 | I:3 | V:5', 'HC', 1),
+    tpl(['Complete cadence'], 'I:3 | IV:4 | V:2 | I:3', 'IAC', 1.5),
+    tpl(['Meyer'], 'I:1 | vii°6:7 | vii°:4 | I:3', 'IAC', 2.5, { minGrade: 4 }),
+    tpl(['Romanesca', 'Converging half cadence'], 'I:3,V6:2 | vi:1,iii6:7 | IV:6,I6:5 | ii6:4,V:2', 'HC', 3, { sequence: ROMANESCA, minGrade: 3 }),
   ],
   minor: [
-    tpl('i | iv | V | V', 'HC', 3),
-    tpl('i | iv | i | V', 'HC', 2.5),
-    tpl('i | V | i | V', 'HC', 1.5),
-    tpl('i | VI | iv | V', 'HC', 2),
-    tpl('i | iv | V | i', 'IAC', 2),
-    tpl('i | V | iv | i', 'PC', 1.5),
-    ...SEQUENCES_HC.minor,
+    tpl(['Do–Re–Mi', 'Half cadence'], 'i:1 | V:2 | i:3 | V:2', 'HC', 2),
+    tpl(['Do–Re–Mi', 'Half cadence'], 'i:1 | V6:2 | i:3 | V:2', 'HC', 3, { minGrade: 3 }),
+    tpl(['Do–Re–Mi', 'Phrygian half cadence'], 'i:1 | V6:2 | i:3 | iv6:4,V:2', 'HC', 2.5, { minGrade: 3, paired: true }),
+    tpl(['Complete cadence'], 'i:3 | iv:4 | V:2 | i:3', 'IAC', 1.5),
+    tpl(['Meyer'], 'i:1 | vii°6:7 | vii°:4 | i:3', 'IAC', 2.5, { minGrade: 4 }),
+    tpl(['Romanesca', 'Phrygian half cadence'], 'i:3,v6:2 | VI:1,III6:7 | iv:6,i6:5 | iv6:4,V:2', 'HC', 3, { sequence: ROMANESCA, minGrade: 3 }),
   ],
 };
 
-/** Middle phrase of a 12-bar piece: away from the tonic, ending HC or PC. */
+/** The middle phrase of a twelve-bar piece: a sequence away from the tonic, ending on V. */
 const CONTRAST: Record<Mode, Template[]> = {
   major: [
-    tpl('IV | I | IV | V', 'HC', 2),
-    tpl('IV | V | I | V', 'HC', 2),
-    tpl('vi | IV | V | V', 'HC', 2),
-    tpl('vi | ii | V | V', 'HC', 1),
-    tpl('IV | I | V/V | V', 'HC', 1.5),
-    tpl('IV | V | IV | I', 'PC', 1.5),
-    tpl('vi | V | IV | I', 'PC', 1),
-    ...SEQUENCES_HC.major.map((t) => ({ ...t, weight: t.weight + 0.5 })),
+    tpl(['Monte', 'Converging half cadence'], 'I:3,IV:4 | ii:4,V:5 | IV:6,I6:5 | ii6:4,V:2', 'HC', 2.5, { sequence: MONTE, minGrade: 3, paired: true }),
+    tpl(['Monte', 'Converging half cadence'], 'I:3,IV:4 | V/V:4,V:5 | IV:6,I6:5 | ii6:4,V:2', 'HC', 3, { sequence: MONTE, minGrade: 4, paired: true }),
+    tpl(['Fonte', 'Converging half cadence'], 'V/ii:1,ii:2 | V:7,I:1 | IV:6,I6:5 | ii6:4,V:2', 'HC', 3, { sequence: FONTE, minGrade: 4, paired: true }),
+    tpl(['Romanesca', 'Converging half cadence'], 'I:3,V6:2 | vi:1,iii6:7 | IV:6,I6:5 | ii6:4,V:2', 'HC', 2, { sequence: ROMANESCA, minGrade: 3 }),
+    // Without a sequence (a bar too short for two chords): a Prinner to the dominant, or a Ponte on it.
+    tpl(['Prinner', 'Half cadence'], 'IV:6 | I6:5 | ii6:4 | V:2', 'HC', 0.6, { minGrade: 3 }),
+    tpl(['Ponte'], 'V:5 | V:7 | V:2 | V:5', 'HC', 0.4),
   ],
   minor: [
-    tpl('iv | i | iv | V', 'HC', 2),
-    tpl('iv | V | i | V', 'HC', 2),
-    tpl('VI | iv | V | V', 'HC', 2),
-    tpl('iv | V | iv | i', 'PC', 1.5),
-    ...SEQUENCES_HC.minor.map((t) => ({ ...t, weight: t.weight + 0.5 })),
+    tpl(['Romanesca', 'Phrygian half cadence'], 'i:3,v6:2 | VI:1,III6:7 | iv:6,i6:5 | iv6:4,V:2', 'HC', 2.5, { sequence: ROMANESCA, minGrade: 3 }),
+    tpl(['Ponte'], 'V:5 | V:7 | V:2 | V:5', 'HC', 0.4),
+    tpl(['Prinner', 'Phrygian half cadence'], 'iv:6 | i6:5 | vii°6:4 | iv6:4,V:2', 'HC', 2, { minGrade: 4, paired: true }),
+    tpl(['Descending fifths', 'Half cadence'], 'i:3,iv:6 | VII:2,III:5 | iv:6,i6:5 | V:2', 'HC', 1.5, { sequence: FIFTHS, minGrade: 4, paired: true }),
   ],
 };
 
-/** Final phrase after a deceptive cadence: picks up from vi and closes with a PAC. */
+/** The last phrase after a deceptive cadence (or in place of a repeat): a riposte and a cadence. */
 const CONTINUATION: Record<Mode, Template[]> = {
   major: [
-    tpl('vi,ii | V,I | IV,V | I', 'PAC', 3, { sequence: FIFTHS_SHORT, minGrade: 3 }),
-    tpl('IV | I | ii6,V | I', 'PAC', 1.5),
-    tpl('IV | ii | V | I', 'PAC', 1.5),
-    tpl('vi | IV | V | I', 'PAC', 1),
+    tpl(['Prinner', 'Complete cadence'], 'IV:6,I6:5 | ii:4,I:3 | ii6:4,V:2 | I:1', 'PAC', 3, { minGrade: 3, paired: true }),
+    tpl(['Prinner', 'Complete cadence'], 'IV:6,I6:5 | vii°6:4,I:3 | ii6:4,V:2 | I:1', 'PAC', 3, { minGrade: 4, paired: true }),
+    tpl(['Descending fifths', 'Complete cadence'], 'vi:1,ii:4 | V:7,I:3 | IV:6,V:2 | I:1', 'PAC', 2, { sequence: FIFTHS, minGrade: 3, paired: true }),
+    tpl(['Complete cadence', 'Quiescenza'], 'IV:4,V:2 | I:1 | I:1,IV:6^ | V:7^,I:1', 'PAC', 2, { minGrade: 3, paired: true }),
   ],
   minor: [
-    tpl('VI,ii°6 | V,i | iv,V | i', 'PAC', 2.5, { sequence: FIFTHS_SHORT, minGrade: 4 }),
-    tpl('VI | iv | V | i', 'PAC', 2),
-    tpl('iv | i | V | i', 'PAC', 1.5),
+    tpl(['Prinner', 'Complete cadence'], 'iv:6,i6:5 | vii°6:4,i:3 | iv:4,V:2 | i:1', 'PAC', 3, { minGrade: 4, paired: true }),
+    tpl(['Descending fifths', 'Complete cadence'], 'VI:1,ii°6:4 | V:7,i:3 | iv:6,V:2 | i:1', 'PAC', 2, { sequence: FIFTHS, minGrade: 4, paired: true }),
+    tpl(['Complete cadence', 'Quiescenza'], 'iv:4,V:2 | i:1 | i:1,iv:6^ | V:7^,i:1', 'PAC', 2.5, { minGrade: 3, paired: true }),
   ],
 };
 
 /** The bar before a consequent's last bar: the approach to V. */
 const APPROACH: Record<Mode, Template[]> = {
-  major: [tpl('V', 'PAC', 2), tpl('IV,V', 'PAC', 2), tpl('ii6,V', 'PAC', 2)],
-  minor: [tpl('V', 'PAC', 2), tpl('iv,V', 'PAC', 2), tpl('iv6,V', 'PAC', 1.5), tpl('ii°6,V', 'PAC', 1.5)],
+  major: [
+    tpl(['Complete cadence'], 'V:2', 'PAC', 2),
+    tpl(['Complete cadence'], 'IV:4,V:2', 'PAC', 2, { paired: true }),
+    tpl(['Complete cadence'], 'ii6:4,V:2', 'PAC', 2, { paired: true }),
+  ],
+  minor: [
+    tpl(['Complete cadence'], 'V:2', 'PAC', 2),
+    tpl(['Complete cadence'], 'iv:4,V:2', 'PAC', 2, { paired: true }),
+    tpl(['Complete cadence'], 'iv6:4,V:2', 'PAC', 1.5, { paired: true }),
+    tpl(['Complete cadence'], 'ii°6:4,V:2', 'PAC', 1.5, { paired: true }),
+  ],
 };
 
 const CORE_CHORDS = ['I', 'i', 'IV', 'iv', 'V'];
@@ -282,11 +388,14 @@ function planPhrases(ctx: Ctx, barCount: number): Phrase[] {
   const { rng, spec, style, time, grade, key } = ctx;
   const mode = key.mode;
   const extras: readonly string[] = spec.extraChords.filter((c) => style.extraChords.includes(c));
-  const twoChordBars = spec.inversions && harmonySplit(time) !== null && style.id !== 'folk';
+  const twoChordBars = spec.inversions && harmonySplit(time) !== null;
   const baseOf = (symbol: string) => (symbol.endsWith('6') ? symbol.slice(0, -1) : symbol);
-  const available = (symbol: string) =>
-    (CORE_CHORDS.includes(baseOf(symbol)) || extras.includes(baseOf(symbol))) &&
-    (!symbol.endsWith('6') || spec.inversions);
+  // The melody's range (scale degrees from the tonic): a schema whose notes lie outside it is not used.
+  const window = pitchWindow(key, spec.rhRange, { letter: 'A', alter: 0, octave: 3 }, { letter: 'A', alter: 0, octave: 5 }, ctx.cons?.melodyRange ?? null);
+  const reachable = (goal: number | undefined) => goal === undefined || !window || Array.from({ length: window.hi - window.lo + 1 }, (_, i) => window.lo + i).some((d) => mod(d, 7) === goal);
+  const available = (c: PlannedChord) =>
+    reachable(c.goal) &&
+    (CORE_CHORDS.includes(baseOf(c.symbol)) || extras.includes(baseOf(c.symbol))) && (!c.symbol.endsWith('6') || spec.inversions);
 
   /** Adapts a template to this grade and metre, or returns null if it cannot be used. */
   const adapt = (t: Template): Template | null => {
@@ -294,12 +403,29 @@ function planPhrases(ctx: Ctx, barCount: number): Phrase[] {
     if (t.sequence && !twoChordBars) return null;
     const harmony = t.harmony.map((bar, i) => {
       const inSequence = t.sequence !== undefined && i < t.sequence.units;
-      // Outside a sequence, two chords in a bar need a duple metre; otherwise keep the second.
-      if (bar.length === 2 && !inSequence && !(twoChordBars && DUPLE.includes(time.id))) return [bar[1]];
-      return bar;
+      // Two chords in a bar need a split of the bar: always for a sequence or a paired
+      // (cadential) template, and otherwise only in duple metres; else keep the second.
+      const keep = inSequence || (twoChordBars && (t.paired || DUPLE.includes(time.id)));
+      return bar.length === 2 && !keep ? [bar[1]] : bar;
     });
     if (!harmony.flat().every(available)) return null;
-    return { ...t, harmony };
+    // A sequence copies its model a step away each unit, so its notes must all fit the range in one octave.
+    if (t.sequence && window) {
+      const { units, step } = t.sequence;
+      const model = harmony[0].flatMap((c) => (c.goal === undefined ? [] : [c.goal]));
+      const fits = [-2, -1, 0, 1, 2].some((o) =>
+        model.every((g) => Array.from({ length: units }, (_, k) => g + 7 * o + step * k).every((d) => d >= window.lo && d <= window.hi)),
+      );
+      if (!fits) return null;
+    }
+    // A phrase that lost its dominant to the bar split no longer cadences (a 3/8 Quiescenza would end IV–I).
+    if (t.harmony.length === 4 && t.cadence !== 'HC') {
+      const chords = harmony.flat();
+      if (!/^(V|vii°)/.test(chords[chords.length - 2]?.symbol ?? 'V')) return null;
+    }
+    // A schema that lost one of its notes to the bar split is no longer itself.
+    const lost = t.harmony.flat().length !== harmony.flat().length;
+    return { ...t, harmony, schemas: lost ? t.schemas.filter((s) => s.includes('cadence')) : t.schemas };
   };
   const choose = (options: Template[]): Template => {
     const usable = options.map(adapt).filter((t): t is Template => t !== null);
@@ -312,6 +438,7 @@ function planPhrases(ctx: Ctx, barCount: number): Phrase[] {
     cadence: t.cadence,
     sequence: t.sequence,
     repeatsOpening: false,
+    schemas: t.schemas,
   });
 
   if (barCount === 4) return [phrase('single', 0, choose(SINGLE[mode]))];
@@ -320,20 +447,22 @@ function planPhrases(ctx: Ctx, barCount: number): Phrase[] {
   /** Repeats the opening two bars, then cadences: PAC to finish, or DC to keep going. */
   const answer = (startBar: number, cadence: 'PAC' | 'DC'): Phrase => {
     const approach = choose(APPROACH[mode]).harmony[0];
-    const goal = cadence === 'PAC' ? tonicSymbol(mode) : mode === 'major' ? 'vi' : 'VI';
+    const goal: PlannedChord = cadence === 'PAC' ? { symbol: tonicSymbol(mode), goal: 0 } : { symbol: mode === 'major' ? 'vi' : 'VI', goal: 0 };
     return {
       kind: 'consequent',
       startBar,
       harmony: [opening.harmony[0], opening.harmony[1], approach, [goal]],
       cadence,
       repeatsOpening: true,
+      schemas: [...opening.schemas.filter((s) => !s.includes('cadence')), cadence === 'PAC' ? 'Complete cadence' : 'Deceptive cadence'],
     };
   };
 
   if (barCount === 8) return [opening, answer(4, 'PAC')];
 
-  // 12 bars: A – B (contrast) – A', or A – A' (deceptive cadence) – continuation to a PAC.
-  if (available(mode === 'major' ? 'vi' : 'VI') && rng.chance(0.5)) {
+  // 12 bars: A – A' (deceptive cadence) – a riposte to the final cadence, or A – B (a sequence) – A'.
+  const continuation = CONTINUATION[mode].map(adapt).some(Boolean);
+  if (continuation && available({ symbol: mode === 'major' ? 'vi' : 'VI' }) && rng.chance(0.5)) {
     return [opening, answer(4, 'DC'), phrase('continuation', 8, choose(CONTINUATION[mode]))];
   }
   // The middle phrase should not reuse the opening's sequence.
@@ -472,6 +601,8 @@ interface Slot {
   stepTo?: number;
   /** The phrase's last note, and the cadence it ends. */
   cadence?: Cadence;
+  /** The schema's note here (0-based scale degree), where a chord begins. */
+  goal?: number;
 }
 
 interface MelodyNote {
@@ -518,6 +649,7 @@ function buildMelody(ctx: Ctx, phrases: Phrase[], segments: Segment[][], rhythms
           t: ((b - phrase.startBar) * time.barTicks + onset) / phraseTicks,
           prevDownbeat: onset === 0 && b > 0 ? barStart[b - 1] : undefined,
           cadence: isPhraseEnd ? phrase.cadence : undefined,
+          goal: segments[b].find((s) => s.at === onset)?.goal,
         });
       });
     }
@@ -568,7 +700,8 @@ function buildMelody(ctx: Ctx, phrases: Phrase[], segments: Segment[][], rhythms
     const size = Math.abs(leap);
     if (size > spec.maxLeap) return false;
     if (cons && !melodicIntervalAllowed(cons, p1.pitch, c.pitch)) return false;
-    if (relax < 3) {
+    // (Level 3 gives up a schema note before level 4 gives up these.)
+    if (relax < 4) {
       if (!isSingableInterval(p1.pitch, c.pitch)) return false;
       // Non-chord tones are approached and left by step.
       if ((p1.nct || c.nct) && size !== 1) return false;
@@ -633,6 +766,8 @@ function buildMelody(ctx: Ctx, phrases: Phrase[], segments: Segment[][], rhythms
     allowed(slot, d) &&
     (!slot.strong || isChordTone(slot.chord, d)) &&
     (slot.stepTo === undefined || Math.abs(d - slot.stepTo) === 1) &&
+    // The schema's note, where it asks for one (relaxed only as a last resort).
+    (slot.goal === undefined || relax >= 3 || mod(d, 7) === slot.goal) &&
     // An imperfect authentic cadence ends on mi or sol, not do.
     (slot.cadence !== 'IAC' || [2, 4].includes(mod(d, 7)));
 
@@ -672,6 +807,8 @@ function buildMelody(ctx: Ctx, phrases: Phrase[], segments: Segment[][], rhythms
 
   let relax = 0;
   const memo = new Map<string, boolean>();
+  /** Lookahead steps left for this attempt: an unreachable schema note must not search forever. */
+  let work = 0;
 
   const tailOk = (p2: MelodyNote | undefined, p1: MelodyNote | undefined, tail: MelodyNote[]) =>
     !tail.length ||
@@ -679,6 +816,7 @@ function buildMelody(ctx: Ctx, phrases: Phrase[], segments: Segment[][], rhythms
 
   const complete = (i: number, end: number, p2: MelodyNote | undefined, p1: MelodyNote, tail: MelodyNote[]): boolean => {
     if (i === end) return tailOk(p2, p1, tail);
+    if (--work < 0) return false;
     const models = modelSlots.filter((m) => m < i).map((m) => notes[m]?.deg);
     const memoKey = [i, end, p2?.deg, p1.deg, tail.map((t) => t.deg).join(','), notes[0]?.deg, notes[1]?.deg, models.join(','), relax].join('|');
     const cached = memo.get(memoKey);
@@ -687,7 +825,7 @@ function buildMelody(ctx: Ctx, phrases: Phrase[], segments: Segment[][], rhythms
       notes[i] = c;
       return complete(i + 1, end, p1, c, tail);
     });
-    memo.set(memoKey, ok);
+    if (work >= 0) memo.set(memoKey, ok);
     return ok;
   };
 
@@ -757,10 +895,11 @@ function buildMelody(ctx: Ctx, phrases: Phrase[], segments: Segment[][], rhythms
       return false;
     };
     // Relax the voice-leading rules only if the strict ones cannot be met.
-    for (relax = 0; relax <= 3; relax++) {
+    for (relax = 0; relax <= 4; relax++) {
       memo.clear();
       for (let attempt = 0; attempt < 3; attempt++) {
         budget = 6000;
+        work = 60000;
         notes.length = from;
         if (search(from)) return;
       }
@@ -815,19 +954,7 @@ function buildMelody(ctx: Ctx, phrases: Phrase[], segments: Segment[][], rhythms
 // Left hand
 // ---------------------------------------------------------------------------
 
-type LhKind =
-  | 'long'
-  | 'split'
-  | 'dyad'
-  | 'dyadSplit'
-  | 'alberti'
-  | 'broken'
-  | 'oompah'
-  | 'walking'
-  | 'march'
-  | 'drone'
-  | 'droneSplit'
-  | 'droneRhythm';
+type LhKind = 'long' | 'split' | 'dyad' | 'dyadSplit' | 'alberti' | 'broken' | 'oompah' | 'walking' | 'march' | 'polonaise';
 
 interface LhEvent {
   /** Degrees relative to the bass note, written for a root-position chord. */
@@ -853,25 +980,23 @@ function wholeBar(time: TimeSignature): number[] {
 }
 
 function chooseLhKind(ctx: Ctx, time: TimeSignature): LhKind {
-  const { rng, grade, style, cons } = ctx;
-  const folk = style.id === 'folk';
+  const { rng, grade, style, cons, spec } = ctx;
+  const simpleCrotchet = !time.compound && time.beatTicks === 4;
   // Fully independent hands: a moving accompaniment at every grade.
   if (cons?.independence === 'full' && grade < 4) {
     const quavers = cons.noteTicks.includes(2);
-    if (folk) return 'droneRhythm';
-    if (quavers) return !time.compound && time.beatTicks === 4 ? 'alberti' : 'broken';
+    if (quavers) return simpleCrotchet ? 'alberti' : 'broken';
     return time.id === '3/4' ? 'oompah' : 'march';
   }
-  if (grade === 1) return folk ? 'long' : rng.chance(0.75) ? 'long' : 'split';
-  if (grade === 2) return folk ? 'drone' : rng.chance(0.5) ? 'long' : 'split';
-  if (grade === 3) return folk ? 'droneSplit' : rng.chance(0.5) ? 'dyad' : 'dyadSplit';
-  const simpleCrotchet = !time.compound && time.beatTicks === 4;
+  if (grade === 1) return rng.chance(0.75) ? 'long' : 'split';
+  if (grade === 2) return rng.chance(0.5) ? 'long' : 'split';
+  if (grade === 3) return rng.chance(0.5) ? 'dyad' : 'dyadSplit';
   switch (style.accompaniment) {
-    case 'alberti': return simpleCrotchet ? 'alberti' : 'broken';
-    case 'oompah': return time.id === '3/4' ? 'oompah' : simpleCrotchet ? 'alberti' : 'broken';
     case 'walking': return simpleCrotchet ? 'walking' : 'broken';
-    case 'march': return 'march';
-    case 'drone': return 'droneRhythm';
+    // A Trio's thinner texture: held intervals rather than a moving bass.
+    case 'light': return rng.chance(0.6) ? 'dyad' : 'dyadSplit';
+    case 'oompah': return time.id === '3/4' ? 'oompah' : simpleCrotchet ? 'alberti' : 'broken';
+    case 'polonaise': return time.id === '3/4' && spec.durations.includes(1) ? 'polonaise' : 'oompah';
   }
 }
 
@@ -891,15 +1016,14 @@ function barEvents(kind: LhKind, time: TimeSignature, rng: Random): LhEvent[] {
       return wholeBar(time).map((ticks) => ({ offs: [0, rng.chance(0.6) ? 4 : 2], ticks }));
     case 'dyadSplit':
       return [{ offs: [0, 4], ticks: h1 }, { offs: rng.pick([[2, 4], [0, 2]]), ticks: h2 }];
-    case 'drone':
-      return wholeBar(time).map((ticks) => ({ offs: [0, 4], ticks }));
-    case 'droneSplit':
-      return [{ offs: [0, 4], ticks: h1 }, { offs: [0, 4], ticks: h2 }];
-    case 'droneRhythm':
-      if (time.compound || time.id === '3/8') {
-        return repeat([{ offs: [0, 4], ticks: 4 }, { offs: [0, 4], ticks: 2 }], time.barTicks / 6);
-      }
-      return repeat([{ offs: [0, 4], ticks: 4 }], time.barTicks / 4);
+    case 'polonaise':
+      // The polonaise rhythm: a quaver and two semiquavers, then quavers — bass, then the chord.
+      return [
+        { offs: [0], ticks: 2 },
+        { offs: [2, 4], ticks: 1 },
+        { offs: [2, 4], ticks: 1 },
+        ...repeat([{ offs: [2, 4], ticks: 2 }], 4),
+      ];
     case 'alberti':
       return time.id === '3/8' ? quavers([0, 4, 2]) : quavers([0, 4, 2, 4]);
     case 'broken':
@@ -943,10 +1067,8 @@ function halfBarEvents(kind: LhKind, ticks: number, time: TimeSignature, rng: Ra
     case 'dyad':
     case 'dyadSplit':
       return [{ offs: [0, rng.chance(0.6) ? 4 : 2], ticks }];
-    case 'drone':
-    case 'droneSplit':
-    case 'droneRhythm':
-      return [{ offs: [0, 4], ticks }];
+    case 'polonaise':
+      return [{ offs: [0], ticks: 2 }, ...repeat([{ offs: [2, 4], ticks: 2 }], ticks / 2 - 1)];
     case 'long':
     case 'split':
       return [{ offs: [0], ticks }];
@@ -965,7 +1087,7 @@ function voice(offset: number, inversion: 0 | 1): number {
 }
 
 function buildLeftHand(ctx: Ctx, segmentsByBar: Segment[][]): Note[][] {
-  const { key, spec, time, rng, style, cons } = ctx;
+  const { key, spec, time, rng, cons } = ctx;
   // Bass stave comfort zone: E2 (one ledger line below) to D4 (two above) — or the user's range.
   const window = pitchWindow(key, spec.lhRange, { letter: 'E', alter: 0, octave: 2 }, { letter: 'D', alter: 0, octave: 4 }, cons?.bassRange ?? null);
   if (!window) throw new Error('The left-hand range does not contain the tonic');
@@ -973,7 +1095,6 @@ function buildLeftHand(ctx: Ctx, segmentsByBar: Segment[][]): Note[][] {
   const minor = key.mode === 'minor';
   const n = segmentsByBar.length;
   const kinds = segmentsByBar.map(() => chooseLhKind(ctx, time));
-  const drone = (k: LhKind) => k === 'drone' || k === 'droneSplit' || k === 'droneRhythm' || (style.id === 'folk' && k === 'long');
 
   // Every chord change in the piece, in order.
   const segs = segmentsByBar.flatMap((bar, b) => bar.map((seg) => ({ ...seg, bar: b, kind: kinds[b], whole: bar.length === 1 })));
@@ -994,7 +1115,8 @@ function buildLeftHand(ctx: Ctx, segmentsByBar: Segment[][]): Note[][] {
   // to know where the next bass note lies.
   /** Possible bass notes for a chord change, each with a cost if its pattern would not fit above it. */
   const optionsFor = (seg: (typeof segs)[number]): { d: number; cost: number }[] => {
-    const base = seg.bar === n - 1 ? 0 : drone(seg.kind) ? (seg.chord.base === 'V' ? 4 : 0) : bassDegree(seg.chord);
+    // (The Quiescenza holds the tonic in the bass under its chords.)
+    const base = seg.bar === n - 1 || seg.pedal ? 0 : bassDegree(seg.chord);
     const span = seg.kind === 'long' || seg.kind === 'split' ? 0 : seg.chord.inversion ? 5 : 4;
     const options: { d: number; cost: number }[] = [];
     for (let k = -3; k <= 3; k++) {
@@ -1076,9 +1198,15 @@ function buildLeftHand(ctx: Ctx, segmentsByBar: Segment[][]): Note[][] {
         : { pitches: [], ticks, rest: true };
 
     if (seg.bar === n - 1) {
-      // Final bar: the tonic, held (with its fifth in folk style).
-      const tonic = style.id === 'folk' && ctx.grade >= 2 ? [r, r + 4].filter(inRange) : [r];
-      wholeBar(time).forEach((ticks, k) => bars[seg.bar].push(note(k === 0 ? tonic : [], ticks)));
+      // Final bar: the tonic, held (once, under both chords of a closing Quiescenza).
+      if (seg.at === 0) wholeBar(time).forEach((ticks, k) => bars[seg.bar].push(note(k === 0 ? [r] : [], ticks)));
+      return;
+    }
+    if (seg.pedal) {
+      // Over the pedal: the held tonic, with the chord's nearest two notes above it.
+      const above: number[] = [];
+      for (let d = r + 1; d <= hi && above.length < 2; d++) if (chordTones(chord).includes(mod(d, 7)) && allowed(chord, d)) above.push(d);
+      bars[seg.bar].push(note([r, ...above], seg.ticks));
       return;
     }
     if (seg.kind === 'walking') {

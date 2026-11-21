@@ -10,7 +10,7 @@ describe('Check Answers: attempts, checking and feedback', () => {
   let input: NoteInputState;
   let check: AnswerCheckState;
   let ear: EarTrainingState;
-  const piece = generatePiece({ seed: 'check', grade: 2, style: 'classical', timeId: '4/4' });
+  const piece = generatePiece({ seed: 'check', grade: 2, form: 'trio', timeId: '4/4' });
   const key = (k: string, o: KeyboardEventInit = {}) => input.handleKey(new KeyboardEvent('keydown', { key: k, ...o }));
   /** Writes the original's first right-hand note (a single note) exactly, then leaves note input with it selected. */
   const writeFirstNoteRight = () => {

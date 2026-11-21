@@ -33,9 +33,6 @@ export function choosePattern(ctx: Ctx): Texture {
         return grade >= 3
           ? ([['broken', 1.5], ['bassChord', 1.5], ['arpeggio', 0.8]] as [Texture, number][])
           : ([['broken', 1], ['bassChord', 1]] as [Texture, number][]);
-      case 'waltz':
-      case 'mazurka':
-        return [['bassChord', 1]] as [Texture, number][];
     }
   })();
   // The user's note values and hand independence narrow the choice; with nothing that fits, held chords.
@@ -53,15 +50,13 @@ function halvesOf(ticks: number): number[] {
 }
 
 function pattern(texture: Texture, at: number, ticks: number, ctx: Ctx, uppers: number): LhEvent[] {
-  const { time, grade, character } = ctx;
+  const { time, grade } = ctx;
   const compound = time.compound || time.id === '3/8';
   const all = Array.from({ length: uppers + 1 }, (_, i) => i);
   const held = (): LhEvent[] => halvesOf(ticks).map((t) => ({ parts: all.slice(0, 3), ticks: t }));
   const cycle = (unit: number, order: number[]) => Array.from({ length: ticks / unit }, (_, i) => ({ parts: [order[i % order.length]], ticks: unit }));
   // Up through the chord and back: bass, middle, top, middle (compound beats: bass, middle, top).
   const sweep = uppers >= 2 ? (compound ? [0, 1, 2] : [0, 1, 2, 1]) : uppers === 1 ? [0, 1] : [0];
-  const dance = character === 'waltz' || character === 'mazurka';
-  const stacc: Note['articulation'] = grade >= 2 && dance ? 'staccato' : undefined;
   switch (texture) {
     case 'final':
       // The closing chord, held: the bass and at most two notes above it.
@@ -84,9 +79,9 @@ function pattern(texture: Texture, at: number, ticks: number, ctx: Ctx, uppers: 
         const t = at + i * unit;
         // Each beat of a new harmony (compound: each dotted crotchet) begins with the bass.
         const onBeat = compound ? t % 6 === 0 : twoFour ? t % 4 === 0 : i === 0;
-        if (onBeat) return { parts: character === 'mazurka' && t === 0 && uppers >= 1 ? [0, 1] : [0], ticks: unit };
+        if (onBeat) return { parts: [0], ticks: unit };
         if (time.id === '4/4' && t === 8 && uppers >= 3) return { parts: [1, 2, 3], ticks: unit };
-        return { parts: dyad, ticks: unit, articulation: stacc };
+        return { parts: dyad, ticks: unit };
       });
     }
   }

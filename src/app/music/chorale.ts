@@ -1012,7 +1012,7 @@ export function generateChorale(settings: Settings): Piece {
     title: `Chorale in ${keyLabel(home)}`,
     seed,
     grade,
-    style: 'chorale',
+    form: 'chorale',
     key,
     mode: key.mode,
     time: TIME_SIGNATURES['4/4'],

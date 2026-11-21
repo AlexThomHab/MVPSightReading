@@ -11,7 +11,7 @@ const LEVELS: DynamicMark[] = ['pp', 'p', 'mp', 'mf', 'f'];
 const softer = (m: DynamicMark, by = 1) => LEVELS[Math.max(0, LEVELS.indexOf(m) - by)];
 
 export function express(ctx: Ctx, form: Form, melody: Melody): Expression {
-  const { ch, grade, character, time } = ctx;
+  const { ch, grade } = ctx;
   const notes = melody.notes;
   const lastBar = notes.length - 1;
   const ref = (bar: number, index: number): NoteRef => ({ bar, index });
@@ -56,21 +56,9 @@ export function express(ctx: Ctx, form: Form, melody: Melody): Expression {
   }
   if (grade >= 3) dynamics.push({ at: lastOf(lastBar), mark: softer(ch.start) === ch.start ? 'pp' : softer(ch.start) });
 
-  // Articulation: appoggiaturas lean (Grade 3+), the climax is held (Grade 2+), and a
-  // mazurka's accent falls on the second or third beat.
+  // Articulation: appoggiaturas lean (Grade 3+) and the climax is held (Grade 2+).
   for (const r of melody.appoggiaturas) if (grade >= 3) notes[r.bar][r.index].articulation = 'accent';
   if (grade >= 2) notes[climax.bar][climax.index].articulation = 'tenuto';
-  if (character === 'mazurka') {
-    const accentBeat = ctx.rng.chance(0.5) ? 1 : 2;
-    notes.forEach((bar, b) => {
-      if (b === lastBar || b % 2 === 1) return;
-      let t = 0;
-      for (const n of bar) {
-        if (t === accentBeat * time.beatTicks && !n.articulation && !n.tie) n.articulation = 'accent';
-        t += n.ticks;
-      }
-    });
-  }
 
   // Slurs: legato over each two-bar unit, broken where a suspension's tie would collide.
   for (let b = 0; b < notes.length; b += 2) {

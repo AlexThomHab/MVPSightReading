@@ -161,7 +161,7 @@ export function isSingableInterval(a: Pitch, b: Pitch): boolean {
 }
 
 /** Chords beyond I, IV and V (i, iv and V in minor) that a grade or style may allow. */
-export type ExtraChord = 'ii' | 'iii' | 'vi' | 'vii°' | 'V/V' | 'v' | 'ii°' | 'III' | 'VI' | 'VII';
+export type ExtraChord = 'ii' | 'iii' | 'vi' | 'vii°' | 'V/V' | 'V/ii' | 'v' | 'ii°' | 'III' | 'VI' | 'VII';
 
 /** A chord as scale degrees, with any chromatic alterations it requires. */
 export interface Chord {
@@ -209,6 +209,7 @@ const CHORD_ROOTS: Readonly<Record<string, number>> = {
   vi: 5, VI: 5,
   'vii°': 6, VII: 6,
   'V/V': 1,
+  'V/ii': 5,
 };
 
 /** Parses a Roman numeral such as "V6" or "vii°6" into a Chord for the given mode. */
@@ -225,6 +226,10 @@ export function chordFor(symbol: string, mode: Mode): Chord {
   } else if (base === 'V/V') {
     // Secondary dominant (major keys, Grade 4+): raises the fourth degree.
     alters = { 3: 1 };
+    chromatic = true;
+  } else if (base === 'V/ii') {
+    // The dominant of ii (a Fonte's first step, major keys): raises the tonic.
+    alters = { 0: 1 };
     chromatic = true;
   }
   return { symbol, base, root, inversion: inverted ? 1 : 0, alters, chromatic };

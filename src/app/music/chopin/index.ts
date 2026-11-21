@@ -1,11 +1,11 @@
 /**
- * Piano miniatures in the manner of Chopin: nocturnes, preludes, waltzes and mazurkas.
+ * The Romantic era's forms, in the manner of Chopin: the Nocturne and the Prelude.
  *
  * Harmony, melody and accompaniment are composed as one structure, in stages:
- *   1. Character and form. A character to suit the metre (a nocturne's singing line over
- *      wide arpeggios, a prelude's sighing melody over repeated chords, a waltz, a mazurka),
- *      and a form to suit the length: a single gesture, a sentence, a period whose answer
- *      returns ornamented, or A–B–A′.
+ *   1. Character and form. The form's character (a nocturne's singing line over wide
+ *      arpeggios, a prelude's sighing melody over repeated chords), and a structure to suit
+ *      the length: a single gesture, a sentence, a period whose answer returns ornamented,
+ *      or A–B–A′.
  *   2. Harmony, from a library of Chopinesque progressions rather than chord by chord:
  *      I–I7–IV–iv, the chromatic lament bass (1–7–♭7–6–♭6–5), ascending bass lines through
  *      applied diminished sevenths, the common-tone diminished seventh over a tonic pedal,
@@ -26,7 +26,7 @@
  *   7. Expression: dynamics, hairpins to the climax, slurs, accents.
  *
  * Deterministic from the seed, and within the grade's limits (keys, metres, rhythms, ranges
- * and leaps) like every other style.
+ * and leaps) like every other form.
  */
 import { constraintsOf, effectiveSpec } from '../constraints';
 import { TIME_SIGNATURES, TimeSignatureId } from '../grades';
@@ -37,7 +37,8 @@ import { harmonySplit } from '../rhythm';
 import { KEYS, Key, keyName } from '../theory';
 import { accompany, choosePattern } from './accompaniment';
 import { planBass } from './bass';
-import { CHARACTERS, CHARACTERS_FOR, CHOPIN_TIMES, Ctx } from './context';
+import { formTimes } from '../forms';
+import { CHARACTERS, Character, Ctx } from './context';
 import { elaborate } from './elaboration';
 import { express } from './expression';
 import { planForm } from './form';
@@ -55,16 +56,11 @@ export function generateChopin(settings: Settings): Piece {
   // Chopin favours minor keys; at the earliest grades major keys still predominate.
   const key: Key =
     KEYS.find((k) => k.id === settings.keyId) ?? rng.weighted(keyChoices, (k) => (k.mode === 'minor' ? (grade <= 2 ? 1 : 1.4) : 1));
-  const timeId: TimeSignatureId =
-    settings.timeId && spec.times.includes(settings.timeId)
-      ? settings.timeId
-      : rng.weighted(
-          CHOPIN_TIMES.filter((t) => spec.times.includes(t)),
-          (t) => (t === '3/4' ? 4 : t === '4/4' ? 3 : 1.5),
-        );
+  // The form's own metres (the most typical first, and most likely).
+  const metres = formTimes(settings.form, spec.times);
+  const timeId: TimeSignatureId = settings.timeId ?? rng.weighted(metres, (t) => (t === metres[0] ? 3 : 1.5));
   const time = TIME_SIGNATURES[timeId];
-  const options = CHARACTERS_FOR[time.id].filter(([c]) => CHARACTERS[c].minGrade <= grade);
-  const character = rng.weighted(options, ([, w]) => w)[0];
+  const character: Character = settings.form === 'nocturne' ? 'nocturne' : 'prelude';
   const ch = CHARACTERS[character];
   const hkey = homeKey(key);
   const split = harmonySplit(time);
@@ -99,7 +95,7 @@ export function generateChopin(settings: Settings): Piece {
     title: `${ch.title} in ${keyName(key)}`,
     seed,
     grade,
-    style: 'chopin',
+    form: settings.form,
     key,
     mode: key.mode,
     time,

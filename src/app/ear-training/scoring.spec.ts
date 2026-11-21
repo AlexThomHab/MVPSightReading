@@ -4,7 +4,7 @@ import { Letter } from '../music/theory';
 import { breakdown, beatName, checkAnswers, checkStaff, summarise } from './scoring';
 import { Transcription, emptyTranscription } from './transcription';
 
-const base = generatePiece({ seed: 'score', grade: 3, style: 'classical', timeId: '4/4' });
+const base = generatePiece({ seed: 'score', grade: 3, form: 'trio', timeId: '4/4' });
 const n = (letter: Letter, octave: number, ticks: number, alter = 0): Note => ({ pitches: [{ letter, alter, octave }], ticks });
 const r = (ticks: number): Note => ({ pitches: [], ticks, rest: true });
 const bar = (rh: Note[], lh: Note[] = [r(16)]): Bar => ({ harmony: [], rh, lh });
@@ -89,7 +89,7 @@ describe('scoring: checking the attempted bars', () => {
   });
 
   it('checks treble and bass apart, and a chorale stave against both its voices', () => {
-    const chorale = generatePiece({ seed: 'score', grade: 2, style: 'chorale' });
+    const chorale = generatePiece({ seed: 'score', grade: 2, form: 'chorale' });
     const t = emptyTranscription(chorale);
     // The soprano alone on the treble stave misses the alto.
     t.bars[1].rh = chorale.bars[1].voices!.s.map((x) => ({ ...x, fermata: undefined }));

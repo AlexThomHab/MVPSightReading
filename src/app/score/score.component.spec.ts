@@ -24,7 +24,7 @@ describe('ScoreComponent bar selection', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({ imports: [ScoreComponent] }).compileComponents();
     fixture = TestBed.createComponent(ScoreComponent);
-    fixture.componentRef.setInput('piece', generatePiece({ seed: 'score', grade: 2, style: 'classical' }));
+    fixture.componentRef.setInput('piece', generatePiece({ seed: 'score', grade: 2, form: 'trio' }));
     fixture.componentRef.setInput('concealed', true);
     const boxes: BarBox[] = Array.from({ length: 8 }, (_, i) => ({ x: (i % 4) * 0.25, y: i < 4 ? 0 : 0.5, w: 0.25, h: 0.4 }));
     (fixture.componentInstance as unknown as { boxes: { set(b: BarBox[]): void } }).boxes.set(boxes);

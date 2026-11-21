@@ -19,7 +19,7 @@ import {
   write,
 } from './transcription';
 
-const piece = generatePiece({ seed: 'transcribe', grade: 3, style: 'classical', timeId: '4/4' });
+const piece = generatePiece({ seed: 'transcribe', grade: 3, form: 'trio', timeId: '4/4' });
 const C5 = { letter: 'C' as const, alter: 0, octave: 5 };
 const E4 = { letter: 'E' as const, alter: 0, octave: 4 };
 const ticks = (notes: Note[]) => notes.map((n) => (n.rest ? `r${n.ticks}` : `${n.ticks}${n.tie ? '~' : ''}`)).join(' ');
@@ -74,9 +74,9 @@ describe('transcription: writing notes like MuseScore', () => {
   });
 
   it('writes a 3/4 bar of rest as one dotted minim rest, and dotted rests by the beat in 6/8', () => {
-    const waltz = emptyTranscription(generatePiece({ seed: 'w', grade: 3, style: 'waltz', timeId: '3/4' }));
+    const waltz = emptyTranscription(generatePiece({ seed: 'w', grade: 3, form: 'waltz', timeId: '3/4' }));
     expect(ticks(waltz.bars[1].rh)).toBe('r12');
-    const jig = write(emptyTranscription(generatePiece({ seed: 'j', grade: 3, style: 'folk', timeId: '6/8' })), { bar: 1, staff: 'rh', tick: 0 }, 2, [C5]);
+    const jig = write(emptyTranscription(generatePiece({ seed: 'j', grade: 3, form: 'prelude', timeId: '6/8' })), { bar: 1, staff: 'rh', tick: 0 }, 2, [C5]);
     expect(ticks(jig.transcription.bars[1].rh)).toBe('2 r4 r6');
   });
 

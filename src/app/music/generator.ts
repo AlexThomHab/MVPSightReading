@@ -1,38 +1,48 @@
 /**
- * Generates a sight-reading piece in any style. Each style has its own generator; this is the
- * one place that knows which — adding a style means adding its generator here and its entry
- * in STYLES.
+ * Generates a sight-reading piece in any form. Each era has its own generator; this is the one
+ * place that knows which — adding a form means adding it to forms.ts and its generator here.
  *
  * Pure TypeScript with no Angular dependencies. Fully deterministic: the same settings
  * (including the seed) always produce the same piece.
  */
+import { generateBaroque } from './baroque';
 import { generateChopin } from './chopin';
 import { generateChorale } from './chorale';
 import { GenerationError, isDefault } from './constraints';
 import { generateCustomised } from './customise';
+import { FORMS, FormId } from './forms';
+import { generateGalant } from './galant';
 import type { Piece, Settings } from './model';
-import { generatePianoPiece } from './piano';
-import { StyleId } from './styles';
 
-type StyleGenerator = (settings: Settings) => Piece;
+type FormGenerator = (settings: Settings) => Piece;
 
-const GENERATORS: Readonly<Record<StyleId, StyleGenerator>> = {
-  classical: generatePianoPiece,
-  waltz: generatePianoPiece,
-  minuet: generatePianoPiece,
-  march: generatePianoPiece,
-  folk: generatePianoPiece,
-  chopin: generateChopin,
+const GENERATORS: Readonly<Record<FormId, FormGenerator>> = {
+  invention: generateBaroque,
+  fugue: generateBaroque,
   chorale: generateChorale,
+  minuet: generateGalant,
+  trio: generateGalant,
+  waltz: generateGalant,
+  polonaise: generateGalant,
+  gavotte: generateGalant,
+  nocturne: generateChopin,
+  prelude: generateChopin,
 };
 
 /**
  * The piece for these settings. With a customisation, the generator composes within the
  * user's constraints and the result is checked against them (see customise.ts); throws a
- * GenerationError when the settings cannot be met.
+ * GenerationError when the settings cannot be met — including a time signature the form is
+ * not written in.
  */
 export function generatePiece(settings: Settings): Piece {
-  const generate = GENERATORS[settings.style];
+  const form = FORMS[settings.form];
+  if (!form) throw new Error(`Unknown form: ${settings.form}`);
+  if (settings.timeId && !form.times.includes(settings.timeId)) {
+    const message = `A ${form.name} is not written in ${settings.timeId} (it is written in ${form.times.join(', ')}).`;
+    throw new GenerationError([{ severity: 'error', area: 'metre', message }]);
+  }
+  const generate = GENERATORS[settings.form];
   return isDefault(settings.custom) ? generate(settings) : generateCustomised(settings, generate);
 }
 

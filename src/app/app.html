@@ -34,10 +34,19 @@
   </div>
 
   <label class="field">
-    <span class="field-label">Style</span>
-    <select [value]="style()" (change)="setStyle($any($event.target).value)">
-      @for (s of styles; track s.id) {
-        <option [value]="s.id" [selected]="s.id === style()">{{ s.name }}</option>
+    <span class="field-label">Era</span>
+    <select (change)="setEra($any($event.target).value)">
+      @for (e of eras; track e.id) {
+        <option [value]="e.id" [selected]="e.id === era()">{{ e.name }}</option>
+      }
+    </select>
+  </label>
+
+  <label class="field">
+    <span class="field-label">Form</span>
+    <select (change)="setForm($any($event.target).value)">
+      @for (f of formOptions(); track f.id) {
+        <option [value]="f.id" [selected]="f.id === form()">{{ f.name }}</option>
       }
     </select>
   </label>
@@ -107,7 +116,7 @@
   <app-customise-panel
     id="customise-panel"
     [grade]="grade()"
-    [style]="style()"
+    [form]="form()"
     [keyId]="settings().keyId"
     [timeId]="settings().timeId"
     [value]="customDraft()"

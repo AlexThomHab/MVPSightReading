@@ -4,6 +4,7 @@ import { degreeOfLetter, homeKey, isChromatic, pcAbove, pcOf, pcSemis, samePc, s
 import { generatePiece } from './generator';
 import { Note, Piece } from './model';
 import { GRADES, GRADE_SPECS } from './grades';
+import { timesFor } from './forms';
 import { diatonicIndex, keyById, keyName, midi, pitchName } from './theory';
 import { onsets } from './durations';
 
@@ -12,10 +13,12 @@ const SEEDS = 10;
 /** Every grade, every metre it allows, several seeds — plus a sweep of key overrides. */
 const pieces: Piece[] = [];
 for (const grade of GRADES) {
-  for (const timeId of GRADE_SPECS[grade].times) {
-    for (let s = 0; s < SEEDS; s++) pieces.push(generatePiece({ seed: `ch-${s}`, grade, style: 'chopin', timeId }));
+  for (const form of ['nocturne', 'prelude'] as const) {
+    for (const timeId of timesFor(grade, form)) {
+      for (let s = 0; s < SEEDS / 2; s++) pieces.push(generatePiece({ seed: `ch-${s}`, grade, form, timeId }));
+    }
   }
-  for (const keyId of GRADE_SPECS[grade].keys) pieces.push(generatePiece({ seed: `key-${keyId}`, grade, style: 'chopin', keyId }));
+  for (const keyId of GRADE_SPECS[grade].keys) pieces.push(generatePiece({ seed: `key-${keyId}`, grade, form: 'prelude', keyId }));
 }
 
 const label = (p: Piece) => `seed=${p.seed} grade=${p.grade} key=${p.key.id} time=${p.time.id} (${p.title})`;
@@ -101,24 +104,24 @@ describe('Chopin style: harmony library', () => {
   });
 });
 
-describe('Chopin style', () => {
+describe('Romantic forms (after Chopin)', () => {
   it('generates across every grade, metre and key the grade allows', () => {
-    expect(pieces.length).toBeGreaterThan(250);
+    expect(pieces.length).toBeGreaterThan(200);
     for (const p of pieces) {
-      expect(p.style).toBe('chopin');
+      expect(['nocturne', 'prelude']).toContain(p.form);
       expect(GRADE_SPECS[p.grade].keys, label(p)).toContain(p.key.id);
       expect(GRADE_SPECS[p.grade].times, label(p)).toContain(p.time.id);
     }
   });
 
   it('respects the selected key and time signature', () => {
-    const p = generatePiece({ seed: 'pick', grade: 4, style: 'chopin', keyId: 'Eb', timeId: '6/8' });
+    const p = generatePiece({ seed: 'pick', grade: 4, form: 'prelude', keyId: 'Eb', timeId: '6/8' });
     expect(p.key.id).toBe('Eb');
     expect(p.time.id).toBe('6/8');
   });
 
   it('is deterministic, and different seeds give different music', () => {
-    const a = { seed: 'same', grade: 5 as const, style: 'chopin' as const };
+    const a = { seed: 'same', grade: 5 as const, form: 'prelude' as const };
     expect(generatePiece(a)).toEqual(generatePiece(a));
     const melodies = new Set(Array.from({ length: 8 }, (_, s) => JSON.stringify(generatePiece({ ...a, seed: `v${s}` }).bars.map((b) => b.rh))));
     expect(melodies.size).toBe(8);
@@ -429,9 +432,8 @@ describe('Chopin style', () => {
     }
   });
 
-  it('varies character: nocturnes, preludes, waltzes and mazurkas', () => {
-    const titles = new Set(pieces.map((p) => p.title.replace(/ in .*$/, '')));
-    expect([...titles].sort()).toEqual(['Mazurka', 'Nocturne', 'Prelude', 'Valse']);
+  it('titles each piece after its form: a Nocturne or a Prelude', () => {
+    for (const p of pieces) expect(p.title, label(p)).toMatch(p.form === 'nocturne' ? /^Nocturne in / : /^Prelude in /);
   });
 
   describe('left-hand accompaniment', () => {
@@ -600,19 +602,13 @@ describe('Chopin style', () => {
       expect(opens.length / ternary.length).toBeGreaterThan(0.5);
     });
 
-    it('opens a nocturne with an expressive rising leap (Op. 9 No. 2) and a waltz, often, with a sigh (Op. 64 No. 2)', () => {
+    it('opens a nocturne with an expressive rising leap (Op. 9 No. 2)', () => {
       const nocturnes = pieces.filter((p) => p.title.startsWith('Nocturne') && p.grade >= 2);
       const leaping = nocturnes.filter((p) => {
         const ds = [...p.bars[0].rh, ...p.bars[1].rh].map((n) => diatonicIndex(n.pitches[0]));
         return ds.some((d, i) => i > 0 && d - ds[i - 1] >= 3);
       });
       expect(leaping.length / nocturnes.length).toBeGreaterThan(0.5);
-      const waltzes = pieces.filter((p) => p.title.startsWith('Valse') && p.grade >= 2);
-      const sighing = waltzes.filter((p) => {
-        const first = p.bars[0].rh[0].pitches[0];
-        return !chordAt(p, 0, 0).tones.some((t) => samePc(t, pcOf(first)));
-      });
-      expect(sighing.length / waltzes.length).toBeGreaterThan(0.25);
     });
   });
 });

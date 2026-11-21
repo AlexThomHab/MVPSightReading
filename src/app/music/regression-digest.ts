@@ -5,7 +5,7 @@
  */
 import { generatePiece } from './generator';
 import { GRADES, GRADE_SPECS, Grade } from './grades';
-import { STYLE_IDS, StyleId } from './styles';
+import { FORM_IDS, timesFor } from './forms';
 
 /** JSON with object keys sorted, so field order never affects the digest. */
 function canonicalJson(value: unknown): string {
@@ -29,19 +29,18 @@ function fnv1a(text: string): string {
   return h.toString(16).padStart(8, '0');
 }
 
-/** One digest per style and grade, covering every metre the grade allows, several seeds and a key override. */
-export function styleGradeDigests(seeds = 3): Record<string, string> {
+/** One digest per form and grade, covering every metre the form offers at the grade, several seeds and a key override. */
+export function formGradeDigests(seeds = 3): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const style of STYLE_IDS as readonly StyleId[]) {
+  for (const form of FORM_IDS) {
     for (const grade of GRADES as readonly Grade[]) {
       const parts: string[] = [];
-      const times = style === 'chorale' ? (['4/4'] as const) : GRADE_SPECS[grade].times;
-      for (const timeId of times) {
-        for (let s = 0; s < seeds; s++) parts.push(canonicalJson(generatePiece({ seed: `reg-${s}`, grade, style, timeId })));
+      for (const timeId of timesFor(grade, form)) {
+        for (let s = 0; s < seeds; s++) parts.push(canonicalJson(generatePiece({ seed: `reg-${s}`, grade, form, timeId })));
       }
-      parts.push(canonicalJson(generatePiece({ seed: 'reg-key', grade, style, keyId: GRADE_SPECS[grade].keys[1] })));
-      parts.push(canonicalJson(generatePiece({ seed: 'reg-free', grade, style })));
-      out[`${style}/${grade}`] = fnv1a(parts.join('\n'));
+      parts.push(canonicalJson(generatePiece({ seed: 'reg-key', grade, form, keyId: GRADE_SPECS[grade].keys[1] })));
+      parts.push(canonicalJson(generatePiece({ seed: 'reg-free', grade, form })));
+      out[`${form}/${grade}`] = fnv1a(parts.join('\n'));
     }
   }
   return out;

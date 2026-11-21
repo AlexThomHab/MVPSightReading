@@ -4,7 +4,7 @@ import { Customisation, encodeCustomisation, isDefault } from './music/constrain
 import { Piece, Settings } from './music/model';
 import { GRADES, Grade, TimeSignatureId, isGrade, isTimeSignatureId } from './music/grades';
 import { freshSeed } from './music/random';
-import { STYLES, STYLE_IDS, StyleId, isStyleId } from './music/styles';
+import { ERAS, ERA_IDS, EraId, FORMS, FormId, eraOf, isEraId, isFormId } from './music/forms';
 import { keyById, keyName } from './music/theory';
 import { keyChoices, sameSettings, settingsFromQuery, settingsToQuery, timeChoices } from './settings-link';
 import { CustomisePanelComponent } from './customise/customise-panel.component';
@@ -40,12 +40,16 @@ export class App {
   protected readonly check = inject(AnswerCheckState);
 
   protected readonly grades = GRADES;
-  protected readonly styles = STYLE_IDS.map((id) => STYLES[id]);
+  protected readonly eras = ERA_IDS.map((id) => ERAS[id]);
 
   private readonly initial = settingsFromQuery(typeof location === 'undefined' ? '' : location.search);
   protected readonly seed = signal(this.initial.seed);
   protected readonly grade = signal<Grade>(this.initial.grade);
-  protected readonly style = signal<StyleId>(this.initial.style);
+  /** The form (which decides the era). */
+  protected readonly form = signal<FormId>(this.initial.form);
+  protected readonly era = computed<EraId>(() => eraOf(this.form()));
+  /** The Form menu: the chosen era's forms. */
+  protected readonly formOptions = computed(() => ERAS[this.era()].forms.map((id) => FORMS[id]));
   /** '' means random within the grade. */
   protected readonly keyId = signal(this.initial.keyId ?? '');
   protected readonly timeId = signal<TimeSignatureId | ''>(this.initial.timeId ?? '');
@@ -56,9 +60,9 @@ export class App {
   protected readonly customiseOpen = signal(!!this.initial.custom);
 
   protected readonly keyOptions = computed(() =>
-    keyChoices(this.grade(), this.style(), this.custom()).map((k) => ({ id: k.id, name: keyName(k) })),
+    keyChoices(this.grade(), this.custom()).map((k) => ({ id: k.id, name: keyName(k) })),
   );
-  protected readonly timeOptions = computed(() => timeChoices(this.grade(), this.style(), this.custom()));
+  protected readonly timeOptions = computed(() => timeChoices(this.grade(), this.form(), this.custom()));
 
   protected readonly settings = computed<Settings>(() => {
     const keyId = this.keyId();
@@ -66,7 +70,7 @@ export class App {
     return {
       seed: this.seed(),
       grade: this.grade(),
-      style: this.style(),
+      form: this.form(),
       keyId: this.keyOptions().some((k) => k.id === keyId) ? keyId : undefined,
       timeId: timeId && this.timeOptions().includes(timeId) ? timeId : undefined,
       custom: this.custom(),
@@ -124,7 +128,8 @@ export class App {
 
   protected readonly subtitle = computed(() => {
     const p = this.piece();
-    return [`Grade ${p.grade}`, STYLES[p.style].name, keyName(p.key), p.time.id, this.ear.active() ? `${p.bars.length} bars` : '']
+    const form = FORMS[p.form];
+    return [`Grade ${p.grade}`, ERAS[form.era].name, form.name, keyName(p.key), p.time.id, this.ear.active() ? `${p.bars.length} bars` : '']
       .filter(Boolean)
       .join(' · ');
   });
@@ -170,7 +175,7 @@ export class App {
       const a = this.applied();
       this.seed.set(a.seed);
       this.grade.set(a.grade);
-      this.style.set(a.style);
+      this.form.set(a.form);
       this.keyId.set(a.keyId ?? '');
       this.timeId.set(a.timeId ?? '');
       this.input.exit();
@@ -193,8 +198,17 @@ export class App {
     if (isGrade(grade)) this.grade.set(grade);
   }
 
-  protected setStyle(value: string): void {
-    if (isStyleId(value)) this.style.set(value);
+  /** Choosing an era chooses its first form. */
+  protected setEra(value: string): void {
+    if (isEraId(value) && value !== this.era()) this.setForm(ERAS[value].forms[0]);
+  }
+
+  /** A time signature the new form is not written in goes back to Random. */
+  protected setForm(value: string): void {
+    if (!isFormId(value)) return;
+    this.form.set(value);
+    const time = this.timeId();
+    if (time && !this.timeOptions().includes(time)) this.timeId.set('');
   }
 
   protected setKey(value: string): void {

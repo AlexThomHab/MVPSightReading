@@ -1,6 +1,6 @@
 /**
  * Generation constraints: what a piece may contain. Three layers decide it —
- *   1. style rules (inside each generator: what makes a waltz a waltz);
+ *   1. era and form rules (inside each generator: what makes a waltz a waltz);
  *   2. grade defaults (GRADE_SPECS: the note values, metres, leaps and ranges of a grade);
  *   3. the user's customisation, which overrides the grade where set.
  * `resolveConstraints` merges 2 and 3; `effectiveSpec` hands the result to the generators in
@@ -14,7 +14,7 @@
 import { fullName, lengthName } from './durations';
 import { GRADE_SPECS, Grade, GradeSpec, TIME_SIGNATURES, TimeSignatureId } from './grades';
 import type { Settings } from './model';
-import { STYLES } from './styles';
+import { FORMS, eraOf, formTimes } from './forms';
 import { KEYS, Key, LETTERS, Letter, Pitch, diatonicIndex, keySignatureAlter, midi, naturalAt, pitchName, tonicOctaveFor } from './theory';
 
 // ---------------------------------------------------------------------------
@@ -292,8 +292,8 @@ export function effectiveSpec(grade: Grade, c: GenerationConstraints | null): Gr
     maxBassLeap: c.bassMaxLeap,
     keys,
     chromatic: spec.chromatic && c.accidentals,
-    // V/V raises the 4th: a chromatic note.
-    extraChords: c.accidentals ? spec.extraChords : spec.extraChords.filter((x) => x !== 'V/V'),
+    // V/V raises the 4th and V/ii the tonic: chromatic notes.
+    extraChords: c.accidentals ? spec.extraChords : spec.extraChords.filter((x) => x !== 'V/V' && x !== 'V/ii'),
   };
 }
 
@@ -373,17 +373,22 @@ const describe = (ticks: readonly number[]) => ticks.map(lengthName).join(', ');
 
 /**
  * Problems with a combination of settings, found before generating: errors make a piece
- * impossible; warnings explain where a style must adapt to a setting.
+ * impossible; warnings explain where a form must adapt to a setting.
  */
 export function validateSettings(settings: Settings, c: GenerationConstraints): ConstraintIssue[] {
   const issues: ConstraintIssue[] = [];
   const error = (area: ConstraintIssue['area'], message: string) => issues.push({ severity: 'error', area, message });
   const warn = (area: ConstraintIssue['area'], message: string) => issues.push({ severity: 'warning', area, message });
-  const style = settings.style;
+  const form = FORMS[settings.form];
+  const era = eraOf(settings.form);
+  const counterpoint = settings.form === 'invention' || settings.form === 'fugue';
 
-  // Rhythm and metre.
+  // Rhythm and metre: a form is written only in its own metres.
   if (!c.noteTicks.length) error('rhythm', 'Choose at least one note value.');
-  const metres = settings.timeId ? [settings.timeId] : style === 'chorale' ? (['4/4'] as TimeSignatureId[]) : [...c.times];
+  if (settings.timeId && !form.times.includes(settings.timeId)) {
+    error('metre', `A ${form.name} isn't written in ${settings.timeId}: choose ${form.times.join(', ')}.`);
+  }
+  const metres: TimeSignatureId[] = settings.timeId ? [settings.timeId] : formTimes(settings.form, c.times);
   if (!metres.length) error('metre', 'Choose at least one time signature.');
   const fillable = metres.filter((t) => canFill(TIME_SIGNATURES[t].barTicks, c.noteTicks));
   if (c.noteTicks.length && metres.length && !fillable.length) {
@@ -391,10 +396,12 @@ export function validateSettings(settings: Settings, c: GenerationConstraints): 
   } else if (fillable.length < metres.length) {
     warn('metre', `${metres.filter((t) => !fillable.includes(t)).join(', ')} can't be filled with these note values, so won't be used.`);
   }
-  if (style === 'chorale') {
+  if (settings.form === 'chorale') {
     if (!c.noteTicks.includes(4)) error('rhythm', 'Chorales move in crotchets: allow crotchets.');
-    if (!c.times.includes('4/4') && !settings.timeId) error('metre', 'Chorales are in 4/4: allow 4/4.');
     if (c.restTicks.length) warn('rhythm', "Chorales don't use rests.");
+  }
+  if (!settings.timeId && !form.times.some((t) => c.times.includes(t))) {
+    warn('metre', `A ${form.name} is written in ${form.times.join(' or ')}, so it will use ${metres[0]}.`);
   }
   if (c.syncopation && !(c.noteTicks.includes(2) && c.noteTicks.includes(4))) {
     warn('rhythm', 'Syncopation needs quavers and crotchets, so none will be written.');
@@ -412,7 +419,7 @@ export function validateSettings(settings: Settings, c: GenerationConstraints): 
     warn('range', 'The hands’ ranges overlap: their notes may cross.');
   }
   const candidateKeys = settings.keyId ? KEYS.filter((k) => k.id === settings.keyId) : effectiveSpec(settings.grade, c).keys.map((id) => KEYS.find((k) => k.id === id)!);
-  const usable = candidateKeys.filter((k) => keyAllowed(k, c) && !(STYLES[style].majorOnly && k.mode === 'minor'));
+  const usable = candidateKeys.filter((k) => keyAllowed(k, c));
   const chosen = settings.keyId ? KEYS.find((k) => k.id === settings.keyId) : undefined;
   if (chosen?.mode === 'minor' && !c.accidentals) {
     error('expression', `Minor keys need accidentals for their raised leading note: choose a major key or switch accidentals on.`);
@@ -427,12 +434,15 @@ export function validateSettings(settings: Settings, c: GenerationConstraints): 
   else if (!rises || !falls) error('leaps', `A melody must rise and fall: allow at least one ${rises ? 'falling' : 'rising'} interval.`);
   else if (!c.ascending.has(1) && !c.descending.has(1)) warn('leaps', 'Without 2nds, melodies are hard to shape: some combinations may not be possible.');
 
-  // Style adaptations worth knowing about.
-  if (style === 'chopin' && c.independence === 'together') {
-    warn('hands', "Chopin's flowing accompaniment will follow the melody's rhythm instead.");
+  // How a form adapts, worth knowing about.
+  if (era === 'romantic' && c.independence === 'together') {
+    warn('hands', 'The flowing Romantic accompaniment will follow the melody’s rhythm instead.');
   }
-  if ((style === 'chopin' || style === 'chorale') && !c.accidentals) {
-    warn('expression', `Without accidentals, ${style === 'chopin' ? 'Chopin pieces' : 'chorales'} keep to diatonic harmony (no modulation, secondary dominants or chromatic colour).`);
+  if (counterpoint && c.independence === 'together') {
+    warn('hands', `A ${form.name} is two independent voices: its hands can't move together.`);
+  }
+  if ((era === 'romantic' || settings.form === 'chorale') && !c.accidentals) {
+    warn('expression', `Without accidentals, ${era === 'romantic' ? 'Romantic pieces' : 'chorales'} keep to diatonic harmony (no modulation, secondary dominants or chromatic colour).`);
   }
   return issues;
 }

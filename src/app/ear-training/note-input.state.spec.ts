@@ -9,7 +9,7 @@ describe('NoteInputState: MuseScore-style note input', () => {
   let input: NoteInputState;
   let ear: EarTrainingState;
   let preview: ReturnType<typeof vi.spyOn>;
-  const piece = generatePiece({ seed: 'input', grade: 3, style: 'classical', timeId: '4/4' });
+  const piece = generatePiece({ seed: 'input', grade: 3, form: 'trio', keyId: 'C', timeId: '4/4' });
   const key = (k: string, o: KeyboardEventInit = {}) => input.handleKey(new KeyboardEvent('keydown', { key: k, ...o }));
   const rh = (bar: number) => input.transcription().bars[bar].rh.map((n) => (n.rest ? `r${n.ticks}` : n.pitches.map((p) => `${p.letter}${p.alter > 0 ? '#' : p.alter < 0 ? 'b' : ''}${p.octave}`).join('+') + `/${n.ticks}${n.tie ? '~' : ''}`));
 
@@ -145,7 +145,7 @@ describe('NoteInputState: MuseScore-style note input', () => {
     key('c');
     input.load(piece);
     expect(input.hasNotes()).toBe(true);
-    input.load(generatePiece({ seed: 'other', grade: 3, style: 'classical', timeId: '4/4' }));
+    input.load(generatePiece({ seed: 'other', grade: 3, form: 'trio', keyId: 'C', timeId: '4/4' }));
     expect(input.hasNotes()).toBe(false);
     expect(input.canUndo()).toBe(false);
   });

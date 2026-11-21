@@ -55,15 +55,6 @@ export function elaborate(ctx: Ctx, form: Form, structure: Structure, frame: Fra
   // --- Entries: appoggiaturas and suspensions onto main notes ----------------
   const entries: Entry[] = slots.map(() => 'plain');
   const heads: MP[] = mains.map((m) => m);
-  // A waltz may open on a sigh — an appoggiatura onto its first main note — which its
-  // sequences then keep: the motif's rhythmic and expressive identity (as in Op. 64 No. 2).
-  if (ctx.character === 'waltz' && grade >= 2 && rhythms[0].length >= 2 && structure.climaxIndex !== 0) {
-    const upper = frame.spellings(mains[0].d + 1, slots[0].chord)[0];
-    if (!frame.isCT(upper, slots[0].chord) && upper.d <= frame.hi && upper.d < (structure.climaxD ?? 99) && rng.chance(0.55)) {
-      entries[0] = 'appoggiatura';
-      heads[0] = upper;
-    }
-  }
   for (let k = 1; k < n - 1; k++) {
     const slot = slots[k];
     const s = mains[k];
@@ -245,15 +236,14 @@ export function elaborate(ctx: Ctx, form: Form, structure: Structure, frame: Fra
         let chrom = 0;
         for (let j = 1; j < p.length; j++) {
           const size = steps(p[j - 1], p[j]);
-          // A singing line moves mostly by step; a waltz may sparkle through the chord.
-          const skip = ctx.character === 'waltz' ? [1, 1, 0.8, 0.45, 0.3] : [1, 1, 0.4, 0.2, 0.1];
+          // A singing line moves mostly by step.
+          const skip = [1, 1, 0.4, 0.2, 0.1];
           w *= skip[Math.min(size, 4)];
           if (isChromatic(hkey, pcOf(p[j].pitch)) && !frame.isCT(p[j], slot.chord)) {
             chrom++;
             w *= chromaticPurpose(p[j], p[j + 1] ?? nextHead);
           }
         }
-        if (chrom && ctx.character === 'mazurka') w *= 1.2;
         {
           const chromatic = p.filter((q) => isChromatic(hkey, pcOf(q.pitch)) && !frame.isCT(q, slot.chord));
           const distinct = new Set(chromatic.map((q) => midi(q.pitch))).size;
@@ -290,7 +280,6 @@ export function elaborate(ctx: Ctx, form: Form, structure: Structure, frame: Fra
         }
         const toClimax = k + 1 === structure.climaxIndex;
         if (longest >= 4) w *= grade >= 4 && (toClimax || ornateBar(slot.bar)) ? 1.6 * ch.ornament : 0.3;
-        if (ctx.character === 'waltz' && p.every((q) => frame.isCT(q, slot.chord))) w *= 1.3;
         // Repeated notes are for a prelude's sighs, not elsewhere.
         for (let j = 1; j < all.length; j++) if (samePitch(all[j - 1], all[j])) w *= ctx.character === 'prelude' ? 0.8 : 0.25;
         // Echo the original: the same shape (a sequence) or the same notes (a plain return).

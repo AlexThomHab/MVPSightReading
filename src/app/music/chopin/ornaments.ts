@@ -9,10 +9,10 @@ import { Form } from './form';
 import { Frame } from './frame';
 
 export function ornament(ctx: Ctx, form: Form, melody: Melody, frame: Frame): void {
-  const { grade, rng, ch, character } = ctx;
+  const { grade, rng, ch } = ctx;
   const { slots } = melody.structure;
   const climaxD = melody.structure.climaxD;
-  const graceQuota = grade >= 5 ? 3 : grade >= 4 ? 2 : grade >= 3 && character === 'mazurka' ? 1 : 0;
+  const graceQuota = grade >= 5 ? 3 : grade >= 4 ? 2 : 0;
   let graces = 0;
   const flat = melody.notes.flatMap((bar, b) => bar.map((note, i) => ({ note, b, i, m: melody.meta[b][i] })));
   const chordAt = (slot: number) => slots[slot].chord;

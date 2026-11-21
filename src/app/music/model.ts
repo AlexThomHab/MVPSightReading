@@ -5,7 +5,7 @@
  */
 import { Grade, TimeSignature, TimeSignatureId } from './grades';
 import type { Customisation } from './constraints';
-import { StyleId } from './styles';
+import type { FormId } from './forms';
 import { Key, Mode, Pitch } from './theory';
 
 /** The two staves of piano music: the right hand (treble) and the left hand (bass). */
@@ -66,6 +66,8 @@ export interface Harmony {
   at: number;
   /** Chorales: the chord's notes as pitch-class names, root first (then 3rd, 5th, 7th). */
   tones?: string[];
+  /** Galant pieces: the scale degree (1–7) the phrase's schema puts in the melody here. */
+  melody?: number;
 }
 
 export interface Bar {
@@ -85,18 +87,23 @@ export interface Bar {
  */
 export type Cadence = 'PAC' | 'IAC' | 'HC' | 'PC' | 'DC';
 
-export type SequenceName = 'romanesca' | 'descending-fifths' | 'ascending-5-6';
+export type SequenceName = 'romanesca' | 'descending-fifths' | 'ascending-5-6' | 'fonte' | 'monte';
 
 export interface PhraseInfo {
   startBar: number;
   bars: number;
-  cadence: Cadence;
+  /** How it ends (absent for a Baroque section that runs on into the next). */
+  cadence?: Cadence;
   /** Opens with a harmonic and melodic sequence of this type. */
   sequence?: SequenceName;
   /** Opens with an exact repeat of the piece's first two bars. */
   repeatsOpening: boolean;
   /** The key the phrase cadences in, when it modulates (chorales), e.g. "D major". */
   key?: string;
+  /** Galant pieces: the schemata the phrase is built from, in order (e.g. "Romanesca", "Prinner"). */
+  schemas?: string[];
+  /** Baroque pieces: what the section does — "Subject", "Answer", "Episode", "Final entry"… */
+  section?: string;
 }
 
 export interface Tempo {
@@ -110,7 +117,7 @@ export interface Piece {
   title: string;
   seed: string;
   grade: Grade;
-  style: StyleId;
+  form: FormId;
   key: Key;
   mode: Mode;
   time: TimeSignature;
@@ -118,19 +125,25 @@ export interface Piece {
   dynamic: string;
   bars: Bar[];
   phrases: PhraseInfo[];
-  /** Dynamics, hairpins and slurs, when the style writes them (otherwise `dynamic` alone). */
+  /** Dynamics, hairpins and slurs, when the form writes them (otherwise `dynamic` alone). */
   expression?: Expression;
-  /** How the style adapted to the user's customisation, if it had to. */
+  /**
+   * An opening upbeat (anacrusis), in ticks: the first bar holds only this much, and the last
+   * bar the rest of a bar (a Gavotte's half-bar upbeat). Absent when the piece starts on a downbeat.
+   */
+  upbeat?: number;
+  /** How the form adapted to the user's customisation, if it had to. */
   notices?: string[];
 }
 
 export interface Settings {
   seed: string;
   grade: Grade;
-  style: StyleId;
-  /** Optional override; otherwise a random key allowed by the grade and style. */
+  /** The form (which also decides the era). */
+  form: FormId;
+  /** Optional override; otherwise a random key allowed by the grade. */
   keyId?: string;
-  /** Optional override; otherwise a random time signature allowed by the grade and style. */
+  /** Optional override; otherwise a random time signature allowed by the grade and form. */
   timeId?: TimeSignatureId;
   /** The user's customisation, overriding the grade's defaults where set (see constraints.ts). */
   custom?: Customisation;

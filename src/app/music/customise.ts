@@ -17,6 +17,7 @@ import type { Bar, Note, Piece, Settings, Staff } from './model';
 import { Random } from './random';
 import { Pitch, diatonicIndex, keySignatureAlter, midi, pitchName } from './theory';
 import { onsets, totalTicks } from './durations';
+import { FORMS } from './forms';
 
 
 /** The pitches sounding at tick `t` of a bar's hand, or null in a rest. */
@@ -143,11 +144,21 @@ function clampExpression(piece: Piece): void {
   e.slurs = e.slurs.filter((s) => valid(s.from) && valid(s.to) && before(s.from, s.to));
 }
 
+/** A bar's length: a full bar, except the first and last bars of a piece with an upbeat. */
+function barLength(piece: Piece, b: number): number {
+  const { upbeat } = piece;
+  if (!upbeat) return piece.time.barTicks;
+  if (b === 0) return upbeat;
+  return b === piece.bars.length - 1 ? piece.time.barTicks - upbeat : piece.time.barTicks;
+}
+
 /** Applies the customisation to a generated piece (a new piece; the input is not changed). */
 function applyConstraints(input: Piece, c: GenerationConstraints): Piece {
   const piece: Piece = structuredClone(input);
   const rng = new Random(`${piece.seed}|customise`);
   const chorale = !!piece.bars[0].voices;
+  // Two independent voices are not forced together (see validateSettings).
+  const counterpoint = piece.form === 'invention' || piece.form === 'fugue';
   for (const bar of piece.bars) {
     bar.rh = bar.rh.map((n) => stripMarks(n, c));
     bar.lh = bar.lh.map((n) => stripMarks(n, c));
@@ -159,10 +170,10 @@ function applyConstraints(input: Piece, c: GenerationConstraints): Piece {
   }
   if (!c.slurs && piece.expression) piece.expression = { ...piece.expression, slurs: [] };
   if (!chorale) {
-    for (const bar of piece.bars) {
-      if (c.independence === 'together') bar.lh = alignHands(bar);
-      for (const hand of ['rh', 'lh'] as Staff[]) bar[hand] = refit(bar[hand], bar, piece.time.barTicks, c.noteTicks, c.restTicks);
-    }
+    piece.bars.forEach((bar, b) => {
+      if (c.independence === 'together' && !counterpoint) bar.lh = alignHands(bar);
+      for (const hand of ['rh', 'lh'] as Staff[]) bar[hand] = refit(bar[hand], bar, barLength(piece, b), c.noteTicks, c.restTicks);
+    });
     addRests(piece, c, rng);
     addTies(piece, c, rng);
     clampExpression(piece);
@@ -200,7 +211,7 @@ function checkPiece(piece: Piece, c: GenerationConstraints, custom: Customisatio
 
   piece.bars.forEach((bar, b) => {
     for (const { hand, notes } of parts(bar)) {
-      if (!chorale && totalTicks(notes) !== piece.time.barTicks) fail(`bar ${b + 1}: ${hand} does not fill the bar`);
+      if (!chorale && totalTicks(notes) !== barLength(piece, b)) fail(`bar ${b + 1}: ${hand} does not fill the bar`);
       for (const n of notes) {
         if (n.rest ? !c.restTicks.includes(n.ticks) : !c.noteTicks.includes(n.ticks)) fail(`bar ${b + 1}: a ${n.rest ? 'rest' : 'note'} of ${n.ticks} ticks`);
         const sounding = [...n.pitches, ...(n.grace ?? [])];
@@ -215,7 +226,8 @@ function checkPiece(piece: Piece, c: GenerationConstraints, custom: Customisatio
       }
     }
   });
-  if (!c.times.includes(piece.time.id) && !(chorale && piece.time.id === '4/4')) fail(`the time signature ${piece.time.id}`);
+  // (A form keeps to its own metres even when the user's choice holds none of them.)
+  if (!c.times.includes(piece.time.id) && c.times.some((t) => FORMS[piece.form].times.includes(t))) fail(`the time signature ${piece.time.id}`);
   if (!c.dynamics && (piece.dynamic || piece.expression?.dynamics.length || piece.expression?.hairpins.length)) fail('dynamics');
   if (!c.slurs && piece.expression?.slurs.length) fail('slurs');
 
@@ -244,7 +256,7 @@ function checkPiece(piece: Piece, c: GenerationConstraints, custom: Customisatio
         }
       });
     }
-    if (c.independence === 'together') {
+    if (c.independence === 'together' && piece.form !== 'invention' && piece.form !== 'fugue') {
       piece.bars.forEach((bar, b) => {
         const rh = new Set(onsets(bar.rh));
         if (onsets(bar.lh).some((t, i) => !bar.lh[i].rest && !rh.has(t))) fail(`bar ${b + 1}: the hands are not together`);

@@ -1,7 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { Customisation, PitchRangeSetting } from '../music/constraints';
 import { Grade } from '../music/grades';
-import { StyleId } from '../music/styles';
+import { FormId } from '../music/forms';
 import { CustomisePanelComponent } from './customise-panel.component';
 import { PitchRangeComponent } from './pitch-range.component';
 
@@ -10,10 +10,10 @@ describe('CustomisePanelComponent', () => {
   let el: HTMLElement;
   let emitted: Customisation[];
 
-  async function render(value: Customisation, grade: Grade = 1, style: StyleId = 'classical') {
+  async function render(value: Customisation, grade: Grade = 1, form: FormId = 'trio') {
     fixture = TestBed.createComponent(CustomisePanelComponent);
     fixture.componentRef.setInput('grade', grade);
-    fixture.componentRef.setInput('style', style);
+    fixture.componentRef.setInput('form', form);
     fixture.componentRef.setInput('value', value);
     emitted = [];
     // Like the app: each change becomes the new value.
@@ -71,9 +71,9 @@ describe('CustomisePanelComponent', () => {
     expect(el.querySelector('.footer-status')?.textContent).toMatch(/One setting needs changing/);
   });
 
-  it('explains how a style will adapt, without blocking it', async () => {
-    await render({ independence: 'together' }, 3, 'chopin');
-    expect(el.querySelector('.issues li.warning')?.textContent).toMatch(/Chopin's flowing accompaniment/);
+  it('explains how a form will adapt, without blocking it', async () => {
+    await render({ independence: 'together' }, 3, 'nocturne');
+    expect(el.querySelector('.issues li.warning')?.textContent).toMatch(/flowing Romantic accompaniment/);
     expect(byText('New piece with these settings').disabled).toBe(false);
   });
 

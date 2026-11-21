@@ -7,7 +7,7 @@ const SEEDS_PER_GRADE = 40;
 
 const pieces: Piece[] = [];
 for (const grade of GRADES) {
-  for (let s = 0; s < SEEDS_PER_GRADE; s++) pieces.push(generatePiece({ seed: `chorale-${s}`, grade, style: 'chorale' }));
+  for (let s = 0; s < SEEDS_PER_GRADE; s++) pieces.push(generatePiece({ seed: `chorale-${s}`, grade, form: 'chorale' }));
 }
 
 const VOICES = ['s', 'a', 't', 'b'] as const;
@@ -210,7 +210,7 @@ describe('generateChorale', () => {
           DC: /^(vi|VI)$/.test(last) && /^V7?$/.test(prev),
           PC: /^[Ii]$/.test(last),
         };
-        if (!ok[ph.cadence]) fail(`phrase ${k + 1} (${ph.cadence}) ends ${prev} – ${last}`);
+        if (!ok[ph.cadence!]) fail(`phrase ${k + 1} (${ph.cadence}) ends ${prev} – ${last}`);
       });
       const finalSoprano = line(p, 's').at(-1)!.note.pitches[0];
       if (finalSoprano.letter !== p.key.tonic || finalSoprano.alter !== p.key.tonicAlter) fail(`ends on ${pitchName(finalSoprano)}`);
@@ -242,7 +242,7 @@ describe('generateChorale', () => {
 
   it('is deterministic', () => {
     for (let s = 0; s < 5; s++) {
-      const settings = { seed: `det-${s}`, grade: 5 as const, style: 'chorale' as const };
+      const settings = { seed: `det-${s}`, grade: 5 as const, form: 'chorale' as const };
       expect(generatePiece(settings)).toEqual(generatePiece(settings));
     }
   });

@@ -6,7 +6,7 @@ import { PlaybackService } from './playback/playback.service';
 
 describe('App', () => {
   beforeEach(async () => {
-    history.replaceState(null, '', '/?seed=spec&grade=2&style=waltz');
+    history.replaceState(null, '', '/?seed=spec&grade=2&form=waltz');
     await TestBed.configureTestingModule({ imports: [App] }).compileComponents();
   });
 
@@ -16,8 +16,63 @@ describe('App', () => {
     const el = fixture.nativeElement as HTMLElement;
     expect(el.querySelector('h1')?.textContent).toContain('Sight-Reading Generator');
     expect(el.querySelector('.sheet h2')?.textContent).toMatch(/^Waltz in /);
-    expect(el.querySelector('.sheet-meta')?.textContent).toContain('Grade 2');
+    expect(el.querySelector('.sheet-meta span')?.textContent?.trim()).toMatch(/^Grade 2 · Classical \/ Galant · Waltz · \w.* (major|minor) · 3\/4$/);
     expect(el.querySelector('.seed')?.textContent).toContain('spec');
+  });
+
+  describe('Era, Form and Time menus', () => {
+    let fixture: ComponentFixture<App>;
+    let el: HTMLElement;
+    const menus = () => [...el.querySelectorAll<HTMLSelectElement>('.toolbar select')];
+    const labels = () => [...el.querySelectorAll('.toolbar .field-label')].map((l) => l.textContent!.trim());
+    const options = (i: number) => [...menus()[i].options].map((o) => o.text);
+    const choose = async (i: number, value: string) => {
+      menus()[i].value = value;
+      menus()[i].dispatchEvent(new Event('change'));
+      await fixture.whenStable();
+    };
+    const query = () => new URLSearchParams(location.search);
+
+    beforeEach(async () => {
+      history.replaceState(null, '', '/?seed=menus&grade=5&form=nocturne&time=9/8');
+      fixture = TestBed.createComponent(App);
+      await fixture.whenStable();
+      el = fixture.nativeElement;
+    });
+
+    it('offers Grade, Era, Form, Key and Time, the Form menu holding only the era’s forms', () => {
+      expect(labels().slice(0, 5)).toEqual(['Grade', 'Era', 'Form', 'Key', 'Time']);
+      expect(options(0)).toEqual(['Baroque', 'Classical / Galant', 'Romantic']);
+      expect(menus()[0].value).toBe('romantic');
+      expect(options(1)).toEqual(['Nocturne', 'Prelude']);
+      expect(options(3)).toEqual(['Random', '4/4', '3/4', '6/8', '9/8']);
+      expect(el.querySelector('.sheet-meta span')!.textContent!.trim()).toMatch(/^Grade 5 · Romantic · Nocturne · .* · 9\/8$/);
+    });
+
+    it('chooses an era’s first form, and resets a time signature the new form is not written in', async () => {
+      await choose(0, 'galant');
+      expect(options(1)).toEqual(['Minuet', 'Trio', 'Waltz', 'Polonaise', 'Gavotte']);
+      expect(menus()[1].value).toBe('minuet');
+      expect(options(3)).toEqual(['Random', '3/4']);
+      expect(menus()[3].value).toBe('');
+      expect(query().get('form')).toBe('minuet');
+      expect(query().get('time')).toBeNull();
+      expect(el.querySelector('.sheet h2')!.textContent).toMatch(/^Minuet in /);
+      expect(el.querySelector('.sheet-meta')!.textContent).toContain('· 3/4');
+    });
+
+    it('keeps a time signature the new form shares', async () => {
+      await choose(1, 'prelude'); // 9/8 is not a Prelude's: back to Random
+      expect(query().get('time')).toBeNull();
+      await choose(3, '6/8');
+      await choose(0, 'baroque');
+      expect(menus()[1].value).toBe('invention');
+      expect(query().get('time')).toBeNull(); // an Invention is not in 6/8
+      await choose(1, 'fugue');
+      await choose(3, '6/8');
+      expect(query().get('time')).toBe('6/8');
+      expect(el.querySelector('.sheet h2')!.textContent).toMatch(/^Fugue in /);
+    });
   });
 
   it('writes the settings into the URL so the piece can be shared', async () => {
@@ -26,7 +81,7 @@ describe('App', () => {
     const params = new URLSearchParams(location.search);
     expect(params.get('seed')).toBe('spec');
     expect(params.get('grade')).toBe('2');
-    expect(params.get('style')).toBe('waltz');
+    expect(params.get('form')).toBe('waltz');
   });
 
   it('generates a new seed on "New piece"', async () => {
@@ -53,7 +108,7 @@ describe('App', () => {
 
   it('never lets the tempo go above 140', async () => {
     // A Grade 5 waltz is marked fast: its slider would otherwise run to about 200.
-    history.replaceState(null, '', '/?seed=fast&grade=5&style=waltz');
+    history.replaceState(null, '', '/?seed=fast&grade=5&form=waltz');
     const fixture = TestBed.createComponent(App);
     await fixture.whenStable();
     const slider = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>('input[type=range]')!;
@@ -83,7 +138,7 @@ describe('App', () => {
     const revealed = () => el.querySelector('app-ear-toolbar .count')!.textContent!.trim();
 
     beforeEach(async () => {
-      history.replaceState(null, '', '/?seed=spec&grade=3&style=folk&key=G&time=3/4');
+      history.replaceState(null, '', '/?seed=spec&grade=3&form=trio&key=G&time=3/4');
       fixture = TestBed.createComponent(App);
       await fixture.whenStable();
       el = fixture.nativeElement;
@@ -96,7 +151,7 @@ describe('App', () => {
       await press('Ear training');
       expect([...modes].map((m) => m.getAttribute('aria-checked'))).toEqual(['false', 'true']);
       expect(button('Exit ear training')).toBeUndefined();
-      expect(el.querySelectorAll('.toolbar select').length).toBe(3);
+      expect(el.querySelectorAll('.toolbar select').length).toBe(4);
       expect(button('New piece')).toBeDefined();
       // Ear Training has one Play (for the selected bars) and nothing to print.
       expect(el.querySelector('.toolbar')!.textContent).not.toContain('Print');
@@ -186,14 +241,14 @@ describe('App', () => {
       const [shown, total] = revealed().split('/');
       expect(shown).toBe(total);
 
-      await select(0, 'classical'); // style
+      await select(1, 'minuet'); // form
       expect(seed()).toBe('spec');
-      expect(new URLSearchParams(location.search).get('style')).toBe('folk');
+      expect(new URLSearchParams(location.search).get('form')).toBe('trio');
       expect(el.textContent).toContain('will be used when you click New piece');
 
       await press('New piece');
       expect(seed()).not.toBe('spec');
-      expect(new URLSearchParams(location.search).get('style')).toBe('classical');
+      expect(new URLSearchParams(location.search).get('form')).toBe('minuet');
       expect(el.querySelector('app-ear-toolbar')).not.toBeNull();
       expect(revealed().startsWith('0/')).toBe(true);
       expect(el.textContent).not.toContain('will be used when you click New piece');
@@ -201,11 +256,11 @@ describe('App', () => {
 
     it('drops unapplied setting changes when switching back to sight reading, so the piece stays the same', async () => {
       await press('Ear training');
-      await select(0, 'march');
+      await select(1, 'gavotte');
       await press('Sight reading');
       expect(seed()).toBe('spec');
-      expect(new URLSearchParams(location.search).get('style')).toBe('folk');
-      expect(el.querySelectorAll<HTMLSelectElement>('.toolbar select')[0].value).toBe('folk');
+      expect(new URLSearchParams(location.search).get('form')).toBe('trio');
+      expect(el.querySelectorAll<HTMLSelectElement>('.toolbar select')[1].value).toBe('trio');
     });
 
     it('reveals the selected bars, then the next bar, without changing the selection', async () => {
@@ -279,14 +334,14 @@ describe('App', () => {
   it('reads a customisation from a shared link', async () => {
     const custom = { accidentals: false, noteValues: ['crotchet', 'minim'] };
     const c = btoa(JSON.stringify(custom)).replace(/=+$/, '');
-    history.replaceState(null, '', `/?seed=shared&grade=2&style=classical&c=${c}`);
+    history.replaceState(null, '', `/?seed=shared&grade=2&form=trio&c=${c}`);
     const fixture = TestBed.createComponent(App);
     await fixture.whenStable();
     const el = fixture.nativeElement as HTMLElement;
     expect(el.querySelector('app-customise-panel')).not.toBeNull();
     expect(decodeCustomisation(new URLSearchParams(location.search).get('c'))).toEqual(custom);
     // Without accidentals, the Key menu offers major keys only.
-    const keys = [...el.querySelectorAll<HTMLSelectElement>('.toolbar select')[1].options].map((o) => o.text);
+    const keys = [...el.querySelectorAll<HTMLSelectElement>('.toolbar select')[2].options].map((o) => o.text);
     expect(keys.some((k) => /minor/.test(k))).toBe(false);
   });
 });

@@ -12,11 +12,12 @@ import {
 import { generatePiece } from './generator';
 import { GRADE_SPECS, Grade } from './grades';
 import type { Note, Piece, Settings } from './model';
-import { StyleId } from './styles';
+import { FormId } from './forms';
 import { keySignatureAlter, midi, pitchName } from './theory';
 import { onsets } from './durations';
 
-const PIANO: StyleId[] = ['classical', 'waltz', 'minuet', 'march', 'folk', 'chopin'];
+/** Every form written for two hands (chorales are four voices). */
+const PIANO: FormId[] = ['minuet', 'trio', 'waltz', 'polonaise', 'gavotte', 'nocturne', 'prelude', 'invention', 'fugue'];
 
 /** Generates `count` pieces; returns those that succeeded and the errors of those that did not. */
 function sample(base: Omit<Settings, 'seed'>, count = 12): { pieces: Piece[]; errors: string[] } {
@@ -47,55 +48,57 @@ describe('customisation: settings and validation', () => {
   });
 
   it('reports impossible combinations before generating, instead of ignoring a setting', () => {
-    const errors = (grade: Grade, style: StyleId, custom: Customisation, timeId?: Settings['timeId']) =>
-      validateSettings({ seed: 'v', grade, style, custom, timeId }, resolveConstraints(grade, custom))
+    const errors = (grade: Grade, form: FormId, custom: Customisation, timeId?: Settings['timeId']) =>
+      validateSettings({ seed: 'v', grade, form, custom, timeId }, resolveConstraints(grade, custom))
         .filter((i) => i.severity === 'error')
         .map((i) => i.message);
-    expect(errors(1, 'classical', { noteValues: [] })[0]).toMatch(/at least one note value/);
-    expect(errors(3, 'classical', { noteValues: ['minim'] }, '3/4')[0]).toMatch(/can't be made of minim/);
+    expect(errors(1, 'trio', { noteValues: [] })[0]).toMatch(/at least one note value/);
+    expect(errors(3, 'trio', { noteValues: ['minim'] }, '3/4')[0]).toMatch(/can't be made of minim/);
     expect(errors(3, 'chorale', { noteValues: ['minim', 'quaver'] })[0]).toMatch(/Chorales move in crotchets/);
-    expect(errors(1, 'classical', { melodyRange: { low: 'C4', high: 'E4' } })[0]).toMatch(/at least a fifth/);
-    expect(errors(1, 'classical', { melodyRange: { low: 'G4', high: 'B4' } })[0]).toMatch(/at least a fifth/);
-    expect(errors(3, 'classical', { melodyRange: { low: 'D4', high: 'B4' } }).join(' ')).not.toMatch(/tonic/);
-    expect(errors(3, 'classical', { melodyRange: { low: 'D4', high: 'B4' }, separateHands: false }, undefined)).toEqual([]);
-    expect(errors(1, 'classical', { leapMode: 'custom', ascending: [], descending: [] })[0]).toMatch(/needs to move/);
-    expect(errors(1, 'classical', { leapMode: 'custom', ascending: [1, 2], descending: [] })[0]).toMatch(/must rise and fall/);
+    expect(errors(1, 'trio', { melodyRange: { low: 'C4', high: 'E4' } })[0]).toMatch(/at least a fifth/);
+    expect(errors(1, 'trio', { melodyRange: { low: 'G4', high: 'B4' } })[0]).toMatch(/at least a fifth/);
+    expect(errors(3, 'trio', { melodyRange: { low: 'D4', high: 'B4' } }).join(' ')).not.toMatch(/tonic/);
+    expect(errors(3, 'trio', { melodyRange: { low: 'D4', high: 'B4' }, separateHands: false }, undefined)).toEqual([]);
+    expect(errors(1, 'trio', { leapMode: 'custom', ascending: [], descending: [] })[0]).toMatch(/needs to move/);
+    expect(errors(1, 'trio', { leapMode: 'custom', ascending: [1, 2], descending: [] })[0]).toMatch(/must rise and fall/);
     // A specific key whose tonic lies outside the range.
     const keyed = validateSettings(
-      { seed: 'v', grade: 1, style: 'classical', keyId: 'G', custom: { melodyRange: { low: 'C4', high: 'F4' } } },
+      { seed: 'v', grade: 1, form: 'trio', keyId: 'G', custom: { melodyRange: { low: 'C4', high: 'F4' } } },
       resolveConstraints(1, { melodyRange: { low: 'C4', high: 'F4' } }),
     );
     expect(keyed.some((i) => i.severity === 'error' && /tonic/.test(i.message))).toBe(true);
   });
 
   it('throws a GenerationError carrying the reasons when settings cannot be met', () => {
-    expect(() => generatePiece({ seed: 'x', grade: 1, style: 'classical', custom: { noteValues: [] } })).toThrow(GenerationError);
+    expect(() => generatePiece({ seed: 'x', grade: 1, form: 'trio', custom: { noteValues: [] } })).toThrow(GenerationError);
   });
 
   it('is deterministic: the same seed and customisation give the same piece', () => {
-    const settings: Settings = { seed: 'same', grade: 3, style: 'waltz', custom: { noteValues: ['crotchet', 'quaver', 'minim', 'dottedMinim'], maxLeap: 3, restValues: ['crotchet'] } };
+    const settings: Settings = { seed: 'same', grade: 3, form: 'waltz', custom: { noteValues: ['crotchet', 'quaver', 'minim', 'dottedMinim'], maxLeap: 3, restValues: ['crotchet'] } };
     expect(generatePiece(settings)).toEqual(generatePiece(settings));
   });
 });
 
 // (These generate many pieces each: allow for a busy machine running the whole suite.)
 describe('customisation: every setting shapes the music', { timeout: 60_000 }, () => {
-  it('uses only the note values and rests allowed, in every piano style', () => {
+  it('uses only the note values and rests allowed, in every piano form', () => {
     const custom: Customisation = { noteValues: ['crotchet', 'minim', 'dottedMinim', 'semibreve'], restValues: ['crotchet'] };
     let rests = 0;
-    for (const style of PIANO) {
+    for (const form of PIANO) {
       for (const grade of [1, 3, 5] as Grade[]) {
-        const { pieces, errors } = sample({ grade, style, custom }, 6);
-        expect(errors, `${style} G${grade}`).toEqual([]);
+        const { pieces, errors } = sample({ grade, form, custom }, 6);
+        expect(errors, `${form} G${grade}`).toEqual([]);
         for (const p of pieces) {
           for (const n of [...notesOf(p, 'rh'), ...notesOf(p, 'lh')]) {
-            expect(n.rest ? [4] : [4, 8, 12, 16], `${style} G${grade} ${n.ticks}`).toContain(n.ticks);
+            expect(n.rest ? [4] : [4, 8, 12, 16], `${form} G${grade} ${n.ticks}`).toContain(n.ticks);
             if (n.rest) rests++;
           }
-          for (const bar of p.bars) {
-            expect(bar.rh.reduce((a, n) => a + n.ticks, 0)).toBe(p.time.barTicks);
-            expect(bar.lh.reduce((a, n) => a + n.ticks, 0)).toBe(p.time.barTicks);
-          }
+          p.bars.forEach((bar, b) => {
+            // (A Gavotte's upbeat bar, and the last bar that completes it, are part-bars.)
+            const length = !p.upbeat ? p.time.barTicks : b === 0 ? p.upbeat : b === p.bars.length - 1 ? p.time.barTicks - p.upbeat : p.time.barTicks;
+            expect(bar.rh.reduce((a, n) => a + n.ticks, 0)).toBe(length);
+            expect(bar.lh.reduce((a, n) => a + n.ticks, 0)).toBe(length);
+          });
         }
       }
     }
@@ -103,8 +106,8 @@ describe('customisation: every setting shapes the music', { timeout: 60_000 }, (
   });
 
   it('never writes a rest when rests are not allowed', () => {
-    for (const style of PIANO) {
-      for (const p of sample({ grade: 3, style, custom: { restValues: [] } }, 4).pieces) {
+    for (const form of PIANO) {
+      for (const p of sample({ grade: 3, form, custom: { restValues: [] } }, 4).pieces) {
         expect([...notesOf(p, 'rh'), ...notesOf(p, 'lh')].some((n) => n.rest)).toBe(false);
       }
     }
@@ -112,16 +115,16 @@ describe('customisation: every setting shapes the music', { timeout: 60_000 }, (
 
   it('keeps each hand inside its range', () => {
     const custom: Customisation = { separateHands: true, melodyRange: { low: 'C4', high: 'G5' }, bassRange: { low: 'C2', high: 'G3' } };
-    for (const style of [...PIANO, 'chorale'] as StyleId[]) {
-      const { pieces, errors } = sample({ grade: 4, style, custom }, 6);
-      expect(pieces.length, `${style}: ${errors[0]}`).toBeGreaterThan(3);
+    for (const form of [...PIANO, 'chorale'] as FormId[]) {
+      const { pieces, errors } = sample({ grade: 4, form, custom }, 6);
+      expect(pieces.length, `${form}: ${errors[0]}`).toBeGreaterThan(3);
       for (const p of pieces) {
         for (const bar of p.bars) {
           const rh = bar.voices ? [...bar.voices.s, ...bar.voices.a] : bar.rh;
           const lh = bar.voices ? [...bar.voices.t, ...bar.voices.b] : bar.lh;
-          for (const n of rh) for (const x of [...n.pitches, ...(n.grace ?? [])]) expect(midi(x), `${style} ${pitchName(x)}`).toBeGreaterThanOrEqual(60);
+          for (const n of rh) for (const x of [...n.pitches, ...(n.grace ?? [])]) expect(midi(x), `${form} ${pitchName(x)}`).toBeGreaterThanOrEqual(60);
           for (const n of rh) for (const x of n.pitches) expect(midi(x)).toBeLessThanOrEqual(79);
-          for (const n of lh) for (const x of n.pitches) expect(midi(x), `${style} LH ${pitchName(x)}`).toBeLessThanOrEqual(55);
+          for (const n of lh) for (const x of n.pitches) expect(midi(x), `${form} LH ${pitchName(x)}`).toBeLessThanOrEqual(55);
           for (const n of lh) for (const x of n.pitches) expect(midi(x)).toBeGreaterThanOrEqual(36);
         }
       }
@@ -129,39 +132,39 @@ describe('customisation: every setting shapes the music', { timeout: 60_000 }, (
   });
 
   it('limits melodic leaps to the maximum chosen', () => {
-    for (const style of [...PIANO, 'chorale'] as StyleId[]) {
-      const { pieces, errors } = sample({ grade: 5, style, custom: { maxLeap: 2 } }, 6);
-      expect(pieces.length, `${style}: ${errors[0]}`).toBeGreaterThan(3);
+    for (const form of [...PIANO, 'chorale'] as FormId[]) {
+      const { pieces, errors } = sample({ grade: 5, form, custom: { maxLeap: 2 } }, 6);
+      expect(pieces.length, `${form}: ${errors[0]}`).toBeGreaterThan(3);
       for (const p of pieces) {
         const m = melody(p);
-        for (let i = 1; i < m.length; i++) expect(intervalSize(m[i - 1].pitches[0], m[i].pitches[0]), style).toBeLessThanOrEqual(2);
+        for (let i = 1; i < m.length; i++) expect(intervalSize(m[i - 1].pitches[0], m[i].pitches[0]), form).toBeLessThanOrEqual(2);
       }
     }
   });
 
   it('uses only the intervals chosen, while still shaping a melody', () => {
     const custom: Customisation = { leapMode: 'custom', ascending: [1, 2, 4], descending: [1, 2, 4] };
-    for (const style of ['classical', 'waltz', 'chopin'] as StyleId[]) {
-      const { pieces, errors } = sample({ grade: 3, style, custom }, 8);
-      expect(pieces.length, `${style}: ${errors[0]}`).toBeGreaterThan(4);
+    for (const form of ['trio', 'waltz', 'prelude'] as FormId[]) {
+      const { pieces, errors } = sample({ grade: 3, form, custom }, 8);
+      expect(pieces.length, `${form}: ${errors[0]}`).toBeGreaterThan(4);
       for (const p of pieces) {
         const m = melody(p);
         for (let i = 1; i < m.length; i++) {
           if (m[i - 1].tie) continue;
-          expect([1, 2, 4], `${style} ${pitchName(m[i - 1].pitches[0])}–${pitchName(m[i].pitches[0])}`).toContain(intervalSize(m[i - 1].pitches[0], m[i].pitches[0]));
+          expect([1, 2, 4], `${form} ${pitchName(m[i - 1].pitches[0])}–${pitchName(m[i].pitches[0])}`).toContain(intervalSize(m[i - 1].pitches[0], m[i].pitches[0]));
         }
       }
     }
   });
 
   it('writes no accidentals when they are switched off — even for Chopin and chorales', () => {
-    for (const style of [...PIANO, 'chorale'] as StyleId[]) {
-      const { pieces, errors } = sample({ grade: 5, style, custom: { accidentals: false } }, 5);
-      expect(pieces.length, `${style}: ${errors[0]}`).toBeGreaterThan(2);
+    for (const form of [...PIANO, 'chorale'] as FormId[]) {
+      const { pieces, errors } = sample({ grade: 5, form, custom: { accidentals: false } }, 5);
+      expect(pieces.length, `${form}: ${errors[0]}`).toBeGreaterThan(2);
       for (const p of pieces) {
         for (const bar of p.bars) {
           const all = bar.voices ? [...bar.voices.s, ...bar.voices.a, ...bar.voices.t, ...bar.voices.b] : [...bar.rh, ...bar.lh];
-          for (const n of all) for (const x of [...n.pitches, ...(n.grace ?? [])]) expect(x.alter, `${style} ${pitchName(x)}`).toBe(keySignatureAlter(p.key, x.letter));
+          for (const n of all) for (const x of [...n.pitches, ...(n.grace ?? [])]) expect(x.alter, `${form} ${pitchName(x)}`).toBe(keySignatureAlter(p.key, x.letter));
         }
       }
     }
@@ -169,8 +172,8 @@ describe('customisation: every setting shapes the music', { timeout: 60_000 }, (
 
   it('removes dynamics, articulation, slurs and ornaments that are switched off', () => {
     const custom: Customisation = { dynamics: false, staccato: false, accents: false, tenuto: false, slurs: false, ornaments: false };
-    for (const style of PIANO) {
-      for (const p of sample({ grade: 5, style, custom }, 4).pieces) {
+    for (const form of PIANO) {
+      for (const p of sample({ grade: 5, form, custom }, 4).pieces) {
         expect(p.dynamic).toBe('');
         expect(p.expression?.dynamics ?? []).toEqual([]);
         expect(p.expression?.hairpins ?? []).toEqual([]);
@@ -185,23 +188,23 @@ describe('customisation: every setting shapes the music', { timeout: 60_000 }, (
   });
 
   it('keeps the hands together (shared attack points), or makes them independent, as asked', () => {
-    for (const style of ['classical', 'march', 'chopin'] as StyleId[]) {
-      for (const p of sample({ grade: 3, style, custom: { independence: 'together' } }, 5).pieces) {
+    for (const form of ['trio', 'gavotte', 'prelude'] as FormId[]) {
+      for (const p of sample({ grade: 3, form, custom: { independence: 'together' } }, 5).pieces) {
         for (const bar of p.bars) {
           const rh = new Set(onsets(bar.rh));
-          onsets(bar.lh).forEach((t, i) => bar.lh[i].rest || expect(rh.has(t), `${style} bar onset ${t}`).toBe(true));
+          onsets(bar.lh).forEach((t, i) => bar.lh[i].rest || expect(rh.has(t), `${form} bar onset ${t}`).toBe(true));
         }
       }
     }
     // Fully independent: even at Grade 1 the left hand moves on its own.
     const busy = (custom: Customisation) =>
-      sample({ grade: 2, style: 'classical', custom }, 8).pieces.reduce((a, p) => a + notesOf(p, 'lh').length / p.bars.length, 0);
+      sample({ grade: 2, form: 'trio', custom }, 8).pieces.reduce((a, p) => a + notesOf(p, 'lh').length / p.bars.length, 0);
     expect(busy({ independence: 'full' })).toBeGreaterThan(busy({}) * 1.5);
   });
 
   it('makes rhythm busier as rhythmic difficulty rises, within the same note values', () => {
     const notesPerBar = (difficulty: Customisation['rhythmicDifficulty']) =>
-      sample({ grade: 3, style: 'classical', custom: { rhythmicDifficulty: difficulty, noteValues: ['minim', 'crotchet', 'quaver', 'dottedCrotchet', 'semibreve'] } }, 10).pieces.reduce(
+      sample({ grade: 3, form: 'trio', custom: { rhythmicDifficulty: difficulty, noteValues: ['minim', 'crotchet', 'quaver', 'dottedCrotchet', 'semibreve'] } }, 10).pieces.reduce(
         (a, p) => a + melody(p).length / p.bars.length,
         0,
       );
@@ -212,19 +215,19 @@ describe('customisation: every setting shapes the music', { timeout: 60_000 }, (
   it('writes syncopations only when they are allowed', () => {
     const syncopated = (p: Piece) => p.bars.some((b) => onsets(b.rh).some((t, i) => t % 4 === 2 && b.rh[i].ticks >= 4 && !b.rh[i].rest));
     const custom: Customisation = { noteValues: ['crotchet', 'quaver', 'minim'], syncopation: true, rhythmicDifficulty: 'difficult' };
-    expect(sample({ grade: 3, style: 'classical', custom }, 10).pieces.some(syncopated)).toBe(true);
-    expect(sample({ grade: 3, style: 'classical', custom: { ...custom, syncopation: false } }, 10).pieces.some(syncopated)).toBe(false);
+    expect(sample({ grade: 3, form: 'trio', custom }, 10).pieces.some(syncopated)).toBe(true);
+    expect(sample({ grade: 3, form: 'trio', custom: { ...custom, syncopation: false } }, 10).pieces.some(syncopated)).toBe(false);
   });
 
   it('ties notes only when ties are allowed', () => {
     const tied = (ps: Piece[]) => ps.some((p) => [...notesOf(p, 'rh'), ...notesOf(p, 'lh')].some((n) => n.tie));
-    expect(tied(sample({ grade: 5, style: 'chopin', custom: { ties: false } }, 8).pieces)).toBe(false);
-    expect(tied(sample({ grade: 4, style: 'classical', custom: { ties: true, rhythmicDifficulty: 'difficult' } }, 10).pieces)).toBe(true);
+    expect(tied(sample({ grade: 5, form: 'prelude', custom: { ties: false } }, 8).pieces)).toBe(false);
+    expect(tied(sample({ grade: 4, form: 'trio', custom: { ties: true, rhythmicDifficulty: 'difficult' } }, 10).pieces)).toBe(true);
   });
 
   it('respects the chosen time signatures', () => {
-    for (const p of sample({ grade: 5, style: 'chopin', custom: { timeSignatures: ['6/8', '9/8'] } }, 8).pieces) expect(['6/8', '9/8']).toContain(p.time.id);
-    for (const p of sample({ grade: 3, style: 'classical', custom: { timeSignatures: ['3/4'] } }, 4).pieces) expect(p.time.id).toBe('3/4');
+    for (const p of sample({ grade: 5, form: 'prelude', custom: { timeSignatures: ['6/8', '9/8'] } }, 8).pieces) expect(['6/8', '9/8']).toContain(p.time.id);
+    for (const p of sample({ grade: 3, form: 'trio', custom: { timeSignatures: ['3/4'] } }, 4).pieces) expect(p.time.id).toBe('3/4');
   });
 });
 
@@ -238,7 +241,7 @@ describe('customisation: the practice sessions on the card', { timeout: 60_000 }
       independence: 'together',
       dynamics: false,
     };
-    const { pieces, errors } = sample({ grade: 1, style: 'classical', timeId: '4/4', custom }, 10);
+    const { pieces, errors } = sample({ grade: 1, form: 'trio', timeId: '4/4', custom }, 10);
     expect(errors).toEqual([]);
     for (const p of pieces) {
       expect(p.time.id).toBe('4/4');
@@ -252,7 +255,7 @@ describe('customisation: the practice sessions on the card', { timeout: 60_000 }
 
   it('Example 2 — intermediate Romantic: Grade 3 Chopin in 3/4, leaps to a 6th, hands fully independent, dynamics and accidentals on', () => {
     const custom: Customisation = { noteValues: ['minim', 'crotchet', 'quaver', 'dottedCrotchet', 'dottedMinim'], maxLeap: 5, independence: 'full', dynamics: true, accidentals: true };
-    const { pieces, errors } = sample({ grade: 3, style: 'chopin', timeId: '3/4', custom }, 10);
+    const { pieces, errors } = sample({ grade: 3, form: 'prelude', timeId: '3/4', custom }, 10);
     expect(errors).toEqual([]);
     for (const p of pieces) {
       expect(p.title).toMatch(/^(Nocturne|Valse|Mazurka|Prelude)/);
@@ -262,9 +265,9 @@ describe('customisation: the practice sessions on the card', { timeout: 60_000 }
 
   it('Example 3 — advanced rhythm: Grade 5, crotchets, quavers and semiquavers, difficult, syncopation and ties, leaps to a 4th', () => {
     const custom: Customisation = { noteValues: ['crotchet', 'quaver', 'semiquaver', 'minim'], rhythmicDifficulty: 'difficult', syncopation: true, ties: true, maxLeap: 3 };
-    for (const style of ['classical', 'chopin'] as StyleId[]) {
-      const { pieces, errors } = sample({ grade: 5, style, custom }, 8);
-      expect(pieces.length, `${style}: ${errors[0]}`).toBeGreaterThan(5);
+    for (const form of ['trio', 'prelude'] as FormId[]) {
+      const { pieces, errors } = sample({ grade: 5, form, custom }, 8);
+      expect(pieces.length, `${form}: ${errors[0]}`).toBeGreaterThan(5);
       for (const p of pieces) {
         const m = melody(p);
         for (let i = 1; i < m.length; i++) expect(intervalSize(m[i - 1].pitches[0], m[i].pitches[0])).toBeLessThanOrEqual(3);
@@ -308,11 +311,11 @@ describe('customisation: sharing and defaults', { timeout: 60_000 }, () => {
   });
 
   it('writes in major keys only when accidentals are off (a minor key needs its raised leading note)', () => {
-    for (const style of ['classical', 'chopin', 'chorale'] as StyleId[]) {
-      const { pieces } = sample({ grade: 5, style, custom: { accidentals: false } }, 6);
-      for (const p of pieces) expect(p.key.mode, `${style} ${p.key.id}`).toBe('major');
+    for (const form of ['trio', 'prelude', 'chorale'] as FormId[]) {
+      const { pieces } = sample({ grade: 5, form, custom: { accidentals: false } }, 6);
+      for (const p of pieces) expect(p.key.mode, `${form} ${p.key.id}`).toBe('major');
     }
-    const issues = validateSettings({ seed: 'v', grade: 3, style: 'classical', keyId: 'Am', custom: { accidentals: false } }, resolveConstraints(3, { accidentals: false }));
+    const issues = validateSettings({ seed: 'v', grade: 3, form: 'trio', keyId: 'Am', custom: { accidentals: false } }, resolveConstraints(3, { accidentals: false }));
     expect(issues.find((i) => i.severity === 'error')?.message).toMatch(/Minor keys need accidentals/);
   });
 });

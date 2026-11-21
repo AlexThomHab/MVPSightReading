@@ -6,10 +6,10 @@ import { barLengths, buildSchedule, ornamented } from './schedule';
 const close = (a: number, b: number) => Math.abs(a - b) < 1e-9;
 
 const pieces: Piece[] = [
-  generatePiece({ seed: 'sched-1', grade: 5, style: 'classical' }),
-  generatePiece({ seed: 'sched-2', grade: 4, style: 'waltz', timeId: '6/8' }),
-  generatePiece({ seed: 'sched-3', grade: 2, style: 'march' }),
-  generatePiece({ seed: 'sched-4', grade: 5, style: 'chorale' }),
+  generatePiece({ seed: 'sched-1', grade: 5, form: 'trio' }),
+  generatePiece({ seed: 'sched-2', grade: 3, form: 'nocturne', timeId: '6/8' }),
+  generatePiece({ seed: 'sched-3', grade: 2, form: 'gavotte' }),
+  generatePiece({ seed: 'sched-4', grade: 5, form: 'chorale' }),
 ];
 
 /** Seconds a run of bars lasts at a tempo, counting fermata holds. */
@@ -50,9 +50,10 @@ describe('buildSchedule', () => {
       expect(s.bars.map((b) => b.bar)).toEqual(Array.from({ length: to - from + 1 }, (_, k) => from + k));
       expect(close(s.end, seconds(p, 100, from, to))).toBe(true);
       // Every struck note in those bars is scheduled (tied continuations excepted).
-      const expected = p.bars
-        .slice(from, to + 1)
-        .flatMap((b) => (b.voices ? [b.voices.s, b.voices.a, b.voices.t, b.voices.b] : [b.rh, b.lh]))
+      // (A tie may cross a bar line inside the range: the Gavotte's upbeat moves every bar line.)
+      const voices = p.bars[0].voices ? (['s', 'a', 't', 'b'] as const) : (['rh', 'lh'] as const);
+      const expected = voices
+        .map((v) => p.bars.slice(from, to + 1).flatMap((b) => (b.voices ? b.voices[v as 's'] : b[v as 'rh'])))
         .flatMap((voice) => voice.filter((n, i) => !n.rest && !(i > 0 && voice[i - 1].tie)))
         .flatMap((n) => n.pitches.map(midi))
         .sort((a, b) => a - b);

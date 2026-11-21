@@ -16,7 +16,7 @@ import {
   validateSettings,
 } from '../music/constraints';
 import { GRADE_SPECS, Grade, TIME_SIGNATURES, TimeSignatureId } from '../music/grades';
-import { StyleId } from '../music/styles';
+import { FormId } from '../music/forms';
 import { valueOf } from '../music/durations';
 import { loadVexFlow } from '../score/engraving';
 import { DOT, NOTE, REST, timeDigits } from '../score/glyphs';
@@ -55,7 +55,7 @@ const SECTION_FIELDS: Record<Area, (keyof Customisation)[]> = {
  * leaps, hand independence and expression. Everything starts at the grade's defaults; changing
  * a control overrides that one setting, and Reset returns to the grade. The panel only edits a
  * draft — the app applies it with the next New piece — and shows, as you go, any combination
- * that cannot work and any way a style will have to adapt.
+ * that cannot work and any way a form will have to adapt.
  */
 @Component({
   selector: 'app-customise-panel',
@@ -66,7 +66,7 @@ const SECTION_FIELDS: Record<Area, (keyof Customisation)[]> = {
 })
 export class CustomisePanelComponent {
   readonly grade = input.required<Grade>();
-  readonly style = input.required<StyleId>();
+  readonly form = input.required<FormId>();
   readonly keyId = input<string | undefined>(undefined);
   readonly timeId = input<TimeSignatureId | undefined>(undefined);
   /** The draft customisation being edited. */
@@ -112,7 +112,7 @@ export class CustomisePanelComponent {
   protected readonly customised = computed(() => !isDefault(this.value()));
   protected readonly issues = computed(() =>
     validateSettings(
-      { seed: '', grade: this.grade(), style: this.style(), keyId: this.keyId(), timeId: this.timeId(), custom: this.value() },
+      { seed: '', grade: this.grade(), form: this.form(), keyId: this.keyId(), timeId: this.timeId(), custom: this.value() },
       this.resolved(),
     ),
   );
